@@ -27,20 +27,13 @@
         "title": "가스앱 세션 정보",
         "description": "모바일 앱 세션에서 확인한 계정 식별값을 입력하세요.",
         "data": {
-          "account_id": "계정 ID",
-          "use_contract_num": "사용계약번호",
-          "customer_no": "고객번호",
-          "auth_token": "X-TOKEN",
-          "member_no": "X-MEMBER",
-          "company_code": "X-COMPANY",
-          "platform": "X-PLATFORM",
-          "app_version": "X-VERSION",
-          "os_version": "X-OS-VERSION",
-          "device_name": "X-DEVICE-NAME",
-          "device_id": "X-DEVID",
-          "user_agent": "User-Agent",
-          "adid": "X-ADID",
-          "tid": "X-TID",
+          "account_id": "계정 ID", "use_contract_num": "사용계약번호",
+          "customer_no": "고객번호", "auth_token": "X-TOKEN",
+          "member_no": "X-MEMBER", "company_code": "X-COMPANY",
+          "platform": "X-PLATFORM", "app_version": "X-VERSION",
+          "os_version": "X-OS-VERSION", "device_name": "X-DEVICE-NAME",
+          "device_id": "X-DEVID", "user_agent": "User-Agent",
+          "adid": "X-ADID", "tid": "X-TID",
           "reading_entity_id": "가스미터 현재값 엔티티",
           "reading_round": "검침값 반올림 방법"
         }
@@ -70,8 +63,8 @@
   "entity": {
     "sensor": {
       "current_bill_charge": { "name": "당월 가스 청구금액" },
-      "annual_bill_charge": { "name": "연간 가스 청구금액" },
-      "indication_history": { "name": "가스미터 검침 이력" }
+      "annual_bill_charge":  { "name": "연간 가스 청구금액" },
+      "indication_history":  { "name": "가스미터 검침 이력" }
     },
     "binary_sensor": {
       "submission_result": { "name": "가스미터 자가검침 제출 결과" }
