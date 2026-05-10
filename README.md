@@ -1,6 +1,6 @@
 # Korea Gas App for Home Assistant
 
-Korea Gas App의 사용량/청구/자가검침 정보를 Home Assistant에서 사용할 수 있게 하는 커스텀 통합입니다.
+가스앱의 사용량/청구/자가검침 정보를 Home Assistant에서 사용할 수 있게 하는 커스텀 통합입니다.
 
 이 통합은 가스앱의 모바일 API를 사용해 계정 인증, 계약 조회, 센서 생성, 자가검침 제출을 처리합니다.
 
