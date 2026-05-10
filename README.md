@@ -72,16 +72,16 @@ config/
 
 | 엔티티 | 설명 |
 | --- | --- |
-| `sensor.latest_bill_charge_1613542` | 최근 청구금액 |
-| `sensor.last_meter_reading_1613542` | 최근 검침값 |
-| `binary_sensor.self_meter_reading_available_1613542` | 자가검침 가능 여부 |
+| `sensor.latest_bill_charge_1111111` | 최근 청구금액 |
+| `sensor.last_meter_reading_111111` | 최근 검침값 |
+| `binary_sensor.self_meter_reading_available_111111` | 자가검침 가능 여부 |
 
-`sensor.latest_bill_charge_1613542` 속성:
+`sensor.latest_bill_charge_111111` 속성:
 
 - `latest_bill_month`
 - `latest_bill_usage_m3`
 
-`sensor.last_meter_reading_1613542` 속성:
+`sensor.last_meter_reading_111111` 속성:
 
 - `latest_indication_date`
 
@@ -117,9 +117,9 @@ data:
 `account`에는 다음 값 중 하나를 사용할 수 있습니다.
 
 - 통합 항목 제목, 예: `우리집`
-- 사용계약번호, 예: `1613542`
+- 사용계약번호, 예: `111111`
 - 고객번호
-- 화면에 보이는 기기명, 예: `Gas account 1613542`
+- 화면에 보이는 기기명, 예: `Gas account 111111`
 
 ```yaml
 service: korea_gasapp.submit_meter_reading
@@ -157,8 +157,3 @@ mode: single
 
 - 이 통합은 공식 가스앱 API 문서를 기반으로 한 것이 아닙니다.
 - 가스앱 내부 API가 변경되면 로그인, 센서 조회, 자가검침 제출이 실패할 수 있습니다.
-- 기존에 생성된 엔티티가 남아 있으면 새 entity_id 뒤에 `_2`, `_3` 등이 붙을 수 있습니다. 이 경우 기존 통합과 엔티티를 삭제한 뒤 Home Assistant를 재시작하고 다시 추가하세요.
-
-## 개발 도구
-
-`tools/` 폴더에는 mitmproxy 캡처 분석과 로컬 검증에 사용한 보조 스크립트가 포함되어 있습니다. 일반 사용에는 필요하지 않습니다.
