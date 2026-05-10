@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, time
+import math
+from datetime import date, datetime, time, timedelta
 from typing import Any
 
 import voluptuous as vol
@@ -22,14 +23,17 @@ from .const import (
     CONF_MAX_READING_DELTA,
     CONF_POLL_INTERVAL,
     CONF_READING_ENTITY_ID,
+    CONF_READING_ROUND,
     CONF_SUBMIT_DAY,
     CONF_SUBMIT_TIME,
     CONF_USE_CONTRACT_NUM,
     DEFAULT_MAX_READING_DELTA,
     DEFAULT_POLL_INTERVAL,
+    DEFAULT_READING_ROUND,
     DEFAULT_SUBMIT_DAY,
     DEFAULT_SUBMIT_TIME,
     DOMAIN,
+    READING_ROUND_UP,
 )
 from .coordinator import KoreaGasAppDataUpdateCoordinator
 
@@ -156,14 +160,24 @@ def _schedule_auto_submission(
     entry: KoreaGasAppConfigEntry,
     coordinator: KoreaGasAppDataUpdateCoordinator,
 ) -> CALLBACK_TYPE:
-    """Schedule the configured monthly self-reading submission."""
+    """Schedule the monthly self-reading submission.
+
+    The submission fires at the configured time each day.
+    The actual submission only proceeds when today's date matches
+    the day after the period_start returned by relay/indications,
+    falling back to the user-configured submit_day if period_start
+    is not available.
+    """
     submit_time = _parse_submit_time(
         _entry_value(entry, CONF_SUBMIT_TIME, DEFAULT_SUBMIT_TIME)
     )
-    submit_day = int(_entry_value(entry, CONF_SUBMIT_DAY, DEFAULT_SUBMIT_DAY))
+    fallback_day = int(_entry_value(entry, CONF_SUBMIT_DAY, DEFAULT_SUBMIT_DAY))
+    reading_round = _entry_value(entry, CONF_READING_ROUND, DEFAULT_READING_ROUND)
 
     async def _handle_time(now: datetime) -> None:
-        if now.day != submit_day:
+        # Determine the target submission date
+        target_day = _resolve_submit_day(coordinator, fallback_day)
+        if now.day != target_day:
             return
 
         entity_id = _entry_value(entry, CONF_READING_ENTITY_ID)
@@ -181,7 +195,7 @@ def _schedule_auto_submission(
             )
             return
 
-        reading = _state_to_reading(state.state)
+        reading = _state_to_reading(state.state, reading_round)
         if reading is None:
             _LOGGER.warning(
                 "Skipping Korea Gas App auto submission: entity %s has non-numeric state %s",
@@ -211,9 +225,10 @@ def _schedule_auto_submission(
         await coordinator.async_request_refresh()
 
     _LOGGER.info(
-        "Scheduled Korea Gas App auto submission for day %s at %s using %s",
-        submit_day,
+        "Scheduled Korea Gas App auto submission at %s (fallback day=%s, round=%s) using %s",
         submit_time.isoformat(),
+        fallback_day,
+        reading_round,
         _entry_value(entry, CONF_READING_ENTITY_ID, "no entity"),
     )
     return async_track_time_change(
@@ -223,6 +238,28 @@ def _schedule_auto_submission(
         minute=submit_time.minute,
         second=submit_time.second,
     )
+
+
+def _resolve_submit_day(
+    coordinator: KoreaGasAppDataUpdateCoordinator,
+    fallback_day: int,
+) -> int:
+    """Return the day-of-month on which to submit the reading.
+
+    Uses the day after period_start from the indication API, if available.
+    Falls back to the user-configured day.
+    """
+    if coordinator.data is None:
+        return fallback_day
+    period_start = coordinator.data.indication.period_start
+    if not period_start:
+        return fallback_day
+    try:
+        period_date = date.fromisoformat(period_start)
+        submit_date = period_date + timedelta(days=1)
+        return submit_date.day
+    except (ValueError, TypeError):
+        return fallback_day
 
 
 def _entry_value(
@@ -269,11 +306,15 @@ def _parse_submit_time(value: Any) -> time:
     return time(parts[0], parts[1], parts[2])
 
 
-def _state_to_reading(value: str) -> int | None:
-    """Convert an entity state to a meter reading integer."""
+def _state_to_reading(value: str, reading_round: str) -> int | None:
+    """Convert an entity state to a meter reading integer using ceil or floor."""
     if value in {"unknown", "unavailable", ""}:
         return None
     try:
-        return int(float(value.replace(",", "").strip()))
+        fval = float(value.replace(",", "").strip())
     except ValueError:
         return None
+
+    if reading_round == READING_ROUND_UP:
+        return math.ceil(fval)
+    return math.floor(fval)
