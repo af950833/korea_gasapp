@@ -74,7 +74,7 @@
       "indication_history": { "name": "가스미터 검침 이력" }
     },
     "binary_sensor": {
-      "self_input_available": { "name": "자가검침 가능" }
+      "submission_result": { "name": "가스미터 자가검침 제출 결과" }
     }
   }
 }
