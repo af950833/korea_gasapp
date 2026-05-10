@@ -74,12 +74,6 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
         reading: int = call.data[ATTR_READING]
 
         try:
-            _validate_reading_range(coordinator, reading)
-        except HomeAssistantError as err:
-            _update_sensor_failure(coordinator, reading=reading, reason=str(err), source="manual")
-            raise
-
-        try:
             result = await coordinator.client.async_submit_meter_reading(reading)
         except KoreaGasAppApiError as err:
             _update_sensor_failure(coordinator, reading=reading, reason=str(err), source="manual")
@@ -197,14 +191,6 @@ def _schedule_daily(
             return
 
         try:
-            _validate_reading_range(coordinator, reading)
-        except HomeAssistantError as err:
-            reason = str(err)
-            _LOGGER.warning("Skipping auto submission: %s", reason)
-            _update_sensor_failure(coordinator, reading=reading, reason=reason, source="auto")
-            return
-
-        try:
             result = await coordinator.client.async_submit_meter_reading(reading)
         except KoreaGasAppApiError as err:
             reason = str(err)
@@ -287,24 +273,6 @@ def _resolve_submit_day(coordinator: KoreaGasAppDataUpdateCoordinator) -> int | 
 
 def _entry_value(entry: KoreaGasAppConfigEntry, key: str, default: Any = None) -> Any:
     return entry.options.get(key, entry.data.get(key, default))
-
-
-def _validate_reading_range(
-    coordinator: KoreaGasAppDataUpdateCoordinator,
-    reading: int,
-) -> None:
-    """Raise HomeAssistantError when reading is outside [last, last+500]."""
-    if coordinator.data is None or coordinator.data.last_meter_reading_m3 is None:
-        raise HomeAssistantError(
-            "최근 검침값을 가져올 수 없어 범위 검증이 불가능합니다."
-        )
-    last_reading = int(coordinator.data.last_meter_reading_m3)
-    max_reading = last_reading + 500
-    if last_reading <= reading <= max_reading:
-        return
-    raise HomeAssistantError(
-        f"검침값 {reading}이 허용 범위({last_reading}–{max_reading}) 밖입니다."
-    )
 
 
 def _state_to_reading(value: str, reading_round: str) -> int | None:
