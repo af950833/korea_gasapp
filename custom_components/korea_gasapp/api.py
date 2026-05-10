@@ -49,29 +49,29 @@ class KoreaGasAppEndpointUnknownError(KoreaGasAppApiError):
 
 @dataclass(slots=True)
 class BillDetail:
-    """Parsed key-value from the bill detail areas."""
+    """Parsed key-value pairs from the bill detail areas."""
 
-    basic_charge: int | None = None          # 기본요금
-    usage_charge: int | None = None          # 사용요금
-    vat: int | None = None                   # 부가세
-    discount: int | None = None              # 할인금액
-    truncation: int | None = None            # 절사금액
-    unpaid: int | None = None                # 미납 소계
-    usage_period: str | None = None          # 사용 기간
-    due_date: str | None = None              # 납부 마감일
-    this_month_indicator: int | None = None  # 당월지침 m³
-    last_month_indicator: int | None = None  # 전월지침 m³
-    monthly_usage: int | None = None         # 당월사용량 m³
-    correction_factor: float | None = None   # 보정 계수
-    correction_usage: float | None = None    # 보정량 m³
-    avg_calorific: float | None = None       # 평균열량 MJ/m³
-    used_calorific: float | None = None      # 사용열량 MJ
-    meter_id: str | None = None              # 계량기 번호
-    reading_day: str | None = None           # 검침일
-    reading_method: str | None = None        # 검침방법
-    prev_month_usage: str | None = None      # 전월 사용량
-    prev_year_usage: str | None = None       # 전년 동월 사용량
-    discount_type: str | None = None         # 할인종류
+    basic_charge: int | None = None
+    usage_charge: int | None = None
+    vat: int | None = None
+    discount: int | None = None
+    truncation: int | None = None
+    unpaid: int | None = None
+    usage_period: str | None = None
+    due_date: str | None = None
+    this_month_indicator: int | None = None
+    last_month_indicator: int | None = None
+    monthly_usage: int | None = None
+    correction_factor: float | None = None
+    correction_usage: float | None = None
+    avg_calorific: float | None = None
+    used_calorific: float | None = None
+    meter_id: str | None = None
+    reading_day: str | None = None
+    reading_method: str | None = None
+    prev_month_usage: str | None = None
+    prev_year_usage: str | None = None
+    discount_type: str | None = None
 
 
 @dataclass(slots=True)
@@ -110,7 +110,10 @@ class IndicationInfo:
 
     last_month_indicator: int | None = None
     self_input_available: bool | None = None
-    period_start: str | None = None   # e.g. "2026-06-22"
+    # True when the account has signed up for self-reading service.
+    # Derived from history method labels or selfInputAvailable flag.
+    self_reading_registered: bool = False
+    period_start: str | None = None
     period_end: str | None = None
     period_type: str | None = None
     request_ym: str | None = None
@@ -122,17 +125,12 @@ class GasUsageSnapshot:
 
     customer_no: str
     use_contract_num: str
-    # Current bill
     current_bill: CurrentBillSnapshot = field(default_factory=CurrentBillSnapshot)
-    # Annual history
     annual_bills: list[AnnualBillEntry] = field(default_factory=list)
-    # Indication info
     indication: IndicationInfo = field(default_factory=IndicationInfo)
-    # Indication history
     indication_history: list[IndicationHistoryEntry] = field(default_factory=list)
-    # Self-reading still available (kept for binary sensor)
+    # Convenience aliases used by __init__.py
     self_input_available: bool | None = None
-    # Last meter reading m³ (for validation)
     last_meter_reading_m3: float | None = None
 
 
@@ -174,7 +172,7 @@ class MemberLoginResult:
 
 
 class KoreaGasAppClient:
-    """Small async client boundary for the Gas App API."""
+    """Async HTTP client for the Korea Gas App API."""
 
     def __init__(
         self,
@@ -196,7 +194,6 @@ class KoreaGasAppClient:
         user_agent: str | None = None,
         base_url: str = DEFAULT_API_BASE_URL,
     ) -> None:
-        """Initialize the client."""
         self._session = session
         self._account_id = account_id
         self._customer_no = customer_no
@@ -215,12 +212,7 @@ class KoreaGasAppClient:
         self._base_url = base_url
 
     @classmethod
-    def from_config_entry(
-        cls,
-        hass: HomeAssistant,
-        entry: ConfigEntry,
-    ) -> KoreaGasAppClient:
-        """Create a client from a Home Assistant config entry."""
+    def from_config_entry(cls, hass: HomeAssistant, entry: ConfigEntry) -> KoreaGasAppClient:
         return cls(
             async_get_clientsession(hass),
             account_id=entry.data.get(CONF_ACCOUNT_ID, ""),
@@ -240,11 +232,8 @@ class KoreaGasAppClient:
         )
 
     async def validate(self) -> None:
-        """Validate credentials."""
         if not self._customer_no and not self._use_contract_num:
-            raise KoreaGasAppAuthError(
-                "Customer number or use contract number is required"
-            )
+            raise KoreaGasAppAuthError("Customer number or use contract number is required")
         if not self._auth_token or not self._member_no or not self._company_code:
             raise KoreaGasAppAuthError(
                 "X-TOKEN, X-MEMBER, and X-COMPANY values from the app session are required"
@@ -263,6 +252,16 @@ class KoreaGasAppClient:
         indication = await self._async_get_indication()
         history = await self._async_get_indication_history()
 
+        # Determine self-reading registration.
+        # If any history entry has method "자가검침", the account is registered.
+        # Also trust selfInputAvailable=True from the API (window is open → registered).
+        history_registered = any(
+            (item.method or "").strip() == "자가검침" for item in history
+        )
+        indication.self_reading_registered = (
+            history_registered or indication.self_input_available is True
+        )
+
         last_reading: float | None = None
         if indication.last_month_indicator is not None:
             last_reading = float(indication.last_month_indicator)
@@ -279,7 +278,6 @@ class KoreaGasAppClient:
         )
 
     async def _async_get_current_bill(self) -> CurrentBillSnapshot:
-        """Fetch current month bill detail from relay/bills/month."""
         try:
             data = await self._get(
                 "relay/bills/month",
@@ -291,10 +289,9 @@ class KoreaGasAppClient:
         if not isinstance(data, dict):
             return CurrentBillSnapshot()
 
-        amount_str = data.get("amount", "")
-        charge = self._parse_krw(amount_str)
-
+        charge = self._parse_krw(data.get("amount", ""))
         detail = BillDetail()
+
         for area in (
             data.get("areaEtc") or [],
             data.get("areaPayment") or [],
@@ -358,7 +355,6 @@ class KoreaGasAppClient:
         )
 
     async def _async_get_annual_bills(self) -> list[AnnualBillEntry]:
-        """Fetch annual bill history from relay/bills/summary?f=annual."""
         try:
             data = await self._get(
                 "relay/bills/summary",
@@ -388,17 +384,12 @@ class KoreaGasAppClient:
                 )
             )
 
-        # Sort newest-first
         result.sort(key=lambda e: e.request_ym, reverse=True)
         return result
 
     async def _async_get_indication(self) -> IndicationInfo:
-        """Fetch current indication status from relay/indications."""
         try:
-            data = await self._get(
-                "relay/indications",
-                self._contract_params(),
-            )
+            data = await self._get("relay/indications", self._contract_params())
         except KoreaGasAppApiError:
             return IndicationInfo()
 
@@ -406,7 +397,7 @@ class KoreaGasAppClient:
             return IndicationInfo()
 
         available_raw = data.get("selfInputAvailable")
-        available = None
+        available: bool | None = None
         if available_raw is not None:
             available = str(available_raw).upper() in {"TRUE", "Y", "1"}
 
@@ -419,10 +410,7 @@ class KoreaGasAppClient:
             request_ym=data.get("requestYm"),
         )
 
-    async def _async_get_indication_history(
-        self, limit: int = 6
-    ) -> list[IndicationHistoryEntry]:
-        """Fetch self-reading history from relay/indications/history."""
+    async def _async_get_indication_history(self, limit: int = 6) -> list[IndicationHistoryEntry]:
         try:
             data = await self._get(
                 "relay/indications/history",
@@ -436,13 +424,13 @@ class KoreaGasAppClient:
         for row in rows:
             if not isinstance(row, dict):
                 continue
-            date = row.get("gmtrJobYmd")
+            date_val = row.get("gmtrJobYmd")
             ym = row.get("requestYm")
-            if not date:
+            if not date_val:
                 continue
             result.append(
                 IndicationHistoryEntry(
-                    reading_date=str(date),
+                    reading_date=str(date_val),
                     request_ym=str(ym) if ym else "",
                     indicator=self._coerce_int(row.get("indiCompensThisMonthVc")),
                     method=row.get("gmtrMethod"),
@@ -463,7 +451,6 @@ class KoreaGasAppClient:
         gender_code: str,
         name: str,
     ) -> SmsRequestResult:
-        """Request a NICE SMS verification code."""
         response = await self._post_json(
             "extern/auth/nice/sms/request",
             {
@@ -485,10 +472,7 @@ class KoreaGasAppClient:
                 or response.get("resultMessage")
                 or "Gas App did not return an SMS verification request id"
             )
-        return SmsRequestResult(
-            request_no=str(request_no),
-            response_uniq_id=str(response_uniq_id),
-        )
+        return SmsRequestResult(request_no=str(request_no), response_uniq_id=str(response_uniq_id))
 
     async def async_confirm_sms(
         self,
@@ -497,7 +481,6 @@ class KoreaGasAppClient:
         response_uniq_id: str,
         otp: str,
     ) -> SmsConfirmResult:
-        """Confirm a NICE SMS verification code."""
         response = await self._post_json(
             "extern/auth/nice/sms/confirm",
             {
@@ -531,7 +514,6 @@ class KoreaGasAppClient:
         adid: str,
         marketing_acceptance: str = "N",
     ) -> MemberLoginResult:
-        """Create or re-register a Gas App member session."""
         response = await self._post_json(
             "members",
             {
@@ -557,10 +539,7 @@ class KoreaGasAppClient:
                 response.get("message")
                 or "Gas App did not return a member number and token"
             )
-        return MemberLoginResult(
-            member_no=str(member_no),
-            auth_token=str(auth_token),
-        )
+        return MemberLoginResult(member_no=str(member_no), auth_token=str(auth_token))
 
     async def async_get_init(
         self,
@@ -569,7 +548,6 @@ class KoreaGasAppClient:
         member_no: str | None = None,
         company_code: str = "0",
     ) -> Any:
-        """Fetch the app initialization payload."""
         headers = self._headers_with(
             auth_token=auth_token or self._auth_token or "",
             member_no=member_no or self._member_no or "",
@@ -577,22 +555,19 @@ class KoreaGasAppClient:
         )
         return await self._get("init", {}, headers=headers)
 
-    async def async_submit_meter_reading(
-        self,
-        reading: int,
-    ) -> MeterReadingSubmitResult:
-        """Submit a customer self meter reading."""
+    async def async_submit_meter_reading(self, reading: int) -> MeterReadingSubmitResult:
         await self.validate()
         if not self._use_contract_num:
             raise KoreaGasAppApiError("Use contract number is required for submission")
 
-        payload = {
-            "thisMonthIndicatorCustomer": str(reading),
-            "useContractNum": self._use_contract_num,
-            "customerNum": self._customer_no or "",
-        }
-
-        response = await self._post_json("relay/indications/input", payload)
+        response = await self._post_json(
+            "relay/indications/input",
+            {
+                "thisMonthIndicatorCustomer": str(reading),
+                "useContractNum": self._use_contract_num,
+                "customerNum": self._customer_no or "",
+            },
+        )
         if not isinstance(response, dict):
             raise KoreaGasAppApiError("Unexpected Gas App submission response")
 
@@ -624,13 +599,7 @@ class KoreaGasAppClient:
         params.update(extra)
         return params
 
-    async def _get(
-        self,
-        path: str,
-        params: dict[str, Any],
-        *,
-        headers: dict[str, str] | None = None,
-    ) -> Any:
+    async def _get(self, path: str, params: dict[str, Any], *, headers: dict[str, str] | None = None) -> Any:
         if self._session is None:
             raise KoreaGasAppEndpointUnknownError("HTTP session is not available")
         async with self._session.get(
@@ -642,18 +611,10 @@ class KoreaGasAppClient:
                 raise KoreaGasAppAuthError("Gas App session token is invalid or expired")
             if response.status >= 400:
                 body = await response.text()
-                raise KoreaGasAppApiError(
-                    f"Gas App API request failed: {response.status} {body[:200]}"
-                )
+                raise KoreaGasAppApiError(f"Gas App API request failed: {response.status} {body[:200]}")
             return await response.json()
 
-    async def _post_json(
-        self,
-        path: str,
-        payload: dict[str, Any],
-        *,
-        headers: dict[str, str] | None = None,
-    ) -> Any:
+    async def _post_json(self, path: str, payload: dict[str, Any], *, headers: dict[str, str] | None = None) -> Any:
         if self._session is None:
             raise KoreaGasAppEndpointUnknownError("HTTP session is not available")
         async with self._session.post(
@@ -665,9 +626,7 @@ class KoreaGasAppClient:
                 raise KoreaGasAppAuthError("Gas App session token is invalid or expired")
             if response.status >= 400:
                 body = await response.text()
-                raise KoreaGasAppApiError(
-                    f"Gas App API request failed: {response.status} {body[:200]}"
-                )
+                raise KoreaGasAppApiError(f"Gas App API request failed: {response.status} {body[:200]}")
             return await response.json()
 
     @property
@@ -682,13 +641,7 @@ class KoreaGasAppClient:
     def _anonymous_headers(self) -> dict[str, str]:
         return self._headers_with(auth_token="", member_no="", company_code="null")
 
-    def _headers_with(
-        self,
-        *,
-        auth_token: str,
-        member_no: str,
-        company_code: str,
-    ) -> dict[str, str]:
+    def _headers_with(self, *, auth_token: str, member_no: str, company_code: str) -> dict[str, str]:
         return {
             "Accept": "*/*",
             "User-Agent": self._user_agent,
@@ -711,30 +664,24 @@ class KoreaGasAppClient:
 
     @staticmethod
     def _parse_krw(value: str) -> int | None:
-        """Parse a Korean won string like '17,480 원' or '-840 원'."""
         if not value:
             return None
-        cleaned = value.replace(",", "").replace("원", "").strip()
         try:
-            return int(float(cleaned))
+            return int(float(value.replace(",", "").replace("원", "").strip()))
         except (ValueError, TypeError):
             return None
 
     @staticmethod
     def _parse_m3_int(value: str) -> int | None:
-        """Parse 'm³' quantity string to int."""
-        cleaned = value.replace("m³", "").replace(",", "").strip()
         try:
-            return int(float(cleaned))
+            return int(float(value.replace("m³", "").replace(",", "").strip()))
         except (ValueError, TypeError):
             return None
 
     @staticmethod
     def _parse_m3_float(value: str) -> float | None:
-        """Parse 'm³' quantity string to float."""
-        cleaned = value.replace("m³", "").replace(",", "").strip()
         try:
-            return float(cleaned)
+            return float(value.replace("m³", "").replace(",", "").strip())
         except (ValueError, TypeError):
             return None
 
