@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import voluptuous as vol
@@ -20,19 +20,14 @@ from .api import KoreaGasAppApiError, KoreaGasAppClient
 from .const import (
     CONF_ACCOUNT_ID,
     CONF_CUSTOMER_NO,
-    CONF_MAX_READING_DELTA,
-    CONF_POLL_INTERVAL,
     CONF_READING_ENTITY_ID,
     CONF_READING_ROUND,
-    CONF_SUBMIT_DAY,
-    CONF_SUBMIT_TIME,
     CONF_USE_CONTRACT_NUM,
-    DEFAULT_MAX_READING_DELTA,
-    DEFAULT_POLL_INTERVAL,
     DEFAULT_READING_ROUND,
-    DEFAULT_SUBMIT_DAY,
-    DEFAULT_SUBMIT_TIME,
     DOMAIN,
+    FIXED_UPDATE_HOUR,
+    FIXED_UPDATE_MINUTE,
+    FIXED_UPDATE_SECOND,
     READING_ROUND_UP,
 )
 from .coordinator import KoreaGasAppDataUpdateCoordinator
@@ -115,15 +110,14 @@ def _entry_matches_account(entry: ConfigEntry, account: str) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: KoreaGasAppConfigEntry) -> bool:
     """Set up Korea Gas App from a config entry."""
-    poll_interval = entry.options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
     client = KoreaGasAppClient.from_config_entry(hass, entry)
-    coordinator = KoreaGasAppDataUpdateCoordinator(hass, client, poll_interval)
+    coordinator = KoreaGasAppDataUpdateCoordinator(hass, client)
 
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
-    entry.async_on_unload(_schedule_auto_submission(hass, entry, coordinator))
+    entry.async_on_unload(_schedule_daily(hass, entry, coordinator))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
@@ -137,30 +131,33 @@ async def _async_update_listener(hass: HomeAssistant, entry: KoreaGasAppConfigEn
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-def _schedule_auto_submission(
+def _schedule_daily(
     hass: HomeAssistant,
     entry: KoreaGasAppConfigEntry,
     coordinator: KoreaGasAppDataUpdateCoordinator,
 ) -> CALLBACK_TYPE:
-    """Schedule monthly self-reading submission.
+    """Register a single daily callback at FIXED_UPDATE_HOUR:MM:SS (local time).
 
-    Fires at the configured time every day; actual submission only proceeds when
-    today's date matches the day after period_start from relay/indications
-    (falls back to the user-configured submit_day when period_start is absent).
+    At 08:00 each day this callback:
+      1. Refreshes all coordinator data (billing + indication info).
+      2. If today is the self-reading submission day (period_start + 1),
+         submits the meter reading automatically.
     """
-    submit_time = _parse_submit_time(
-        _entry_value(entry, CONF_SUBMIT_TIME, DEFAULT_SUBMIT_TIME)
-    )
-    fallback_day = int(_entry_value(entry, CONF_SUBMIT_DAY, DEFAULT_SUBMIT_DAY))
     reading_round = _entry_value(entry, CONF_READING_ROUND, DEFAULT_READING_ROUND)
 
-    async def _handle_time(now: datetime) -> None:
-        # Only submit on accounts that have registered for self-reading
-        if coordinator.data and not coordinator.data.indication.self_reading_registered:
+    async def _handle_daily(now: datetime) -> None:
+        # ── 1. Refresh data ──────────────────────────────────────────────
+        _LOGGER.debug("Korea Gas App daily refresh triggered for entry %s", entry.title)
+        await coordinator.async_request_refresh()
+
+        # ── 2. Auto self-reading submission ──────────────────────────────
+        if coordinator.data is None:
+            return
+        if not coordinator.data.indication.self_reading_registered:
             return
 
-        target_day = _resolve_submit_day(coordinator, fallback_day)
-        if now.day != target_day:
+        target_day = _resolve_submit_day(coordinator)
+        if target_day is None or now.day != target_day:
             return
 
         entity_id = _entry_value(entry, CONF_READING_ENTITY_ID)
@@ -204,37 +201,39 @@ def _schedule_auto_submission(
             result.usage,
             result.return_message,
         )
+        # Refresh again so sensors reflect the submitted reading
         await coordinator.async_request_refresh()
 
     _LOGGER.info(
-        "Scheduled Korea Gas App auto submission at %s (fallback day=%s, round=%s) using entity=%s",
-        submit_time.isoformat(),
-        fallback_day,
-        reading_round,
-        _entry_value(entry, CONF_READING_ENTITY_ID, "none"),
+        "Scheduled Korea Gas App daily update at %02d:%02d:%02d for entry '%s'",
+        FIXED_UPDATE_HOUR,
+        FIXED_UPDATE_MINUTE,
+        FIXED_UPDATE_SECOND,
+        entry.title,
     )
     return async_track_time_change(
         hass,
-        _handle_time,
-        hour=submit_time.hour,
-        minute=submit_time.minute,
-        second=submit_time.second,
+        _handle_daily,
+        hour=FIXED_UPDATE_HOUR,
+        minute=FIXED_UPDATE_MINUTE,
+        second=FIXED_UPDATE_SECOND,
     )
 
 
-def _resolve_submit_day(
-    coordinator: KoreaGasAppDataUpdateCoordinator, fallback_day: int
-) -> int:
-    """Return the target day-of-month for submission (period_start + 1 day)."""
+def _resolve_submit_day(coordinator: KoreaGasAppDataUpdateCoordinator) -> int | None:
+    """Return the day-of-month on which to submit the reading (period_start + 1).
+
+    Returns None when period_start is unavailable, which suppresses submission.
+    """
     if coordinator.data is None:
-        return fallback_day
+        return None
     period_start = coordinator.data.indication.period_start
     if not period_start:
-        return fallback_day
+        return None
     try:
         return (date.fromisoformat(period_start) + timedelta(days=1)).day
     except (ValueError, TypeError):
-        return fallback_day
+        return None
 
 
 def _entry_value(entry: KoreaGasAppConfigEntry, key: str, default: Any = None) -> Any:
@@ -246,27 +245,19 @@ def _validate_reading_range(
     coordinator: KoreaGasAppDataUpdateCoordinator,
     reading: int,
 ) -> None:
+    """Validate submitted reading is within [last, last + 500]."""
     if coordinator.data is None or coordinator.data.last_meter_reading_m3 is None:
         raise HomeAssistantError(
             "Cannot validate meter reading because last meter reading is unavailable"
         )
     last_reading = int(coordinator.data.last_meter_reading_m3)
-    max_delta = int(_entry_value(entry, CONF_MAX_READING_DELTA, DEFAULT_MAX_READING_DELTA))
-    max_reading = last_reading + max_delta
+    # Hard-coded maximum delta of 500 m³ (no longer user-configurable)
+    max_reading = last_reading + 500
     if last_reading <= reading <= max_reading:
         return
     raise HomeAssistantError(
         f"Meter reading {reading} is outside allowed range {last_reading}–{max_reading}"
     )
-
-
-def _parse_submit_time(value: Any) -> time:
-    if isinstance(value, time):
-        return value
-    parts = [int(p) for p in str(value).split(":")]
-    if len(parts) == 2:
-        parts.append(0)
-    return time(parts[0], parts[1], parts[2])
 
 
 def _state_to_reading(value: str, reading_round: str) -> int | None:
