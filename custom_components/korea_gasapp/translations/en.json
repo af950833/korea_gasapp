@@ -74,7 +74,7 @@
       "indication_history": { "name": "Gas meter indication history" }
     },
     "binary_sensor": {
-      "self_input_available": { "name": "Self meter reading available" }
+      "submission_result": { "name": "Gas meter submission result" }
     }
   }
 }
