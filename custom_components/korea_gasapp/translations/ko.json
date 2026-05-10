@@ -15,7 +15,8 @@
           "mobile_co": "통신사",
           "submit_day": "자가검침일",
           "submit_time": "자가검침 시간",
-          "reading_entity_id": "가스미터 현재값 엔티티"
+          "reading_entity_id": "가스미터 현재값 엔티티",
+          "max_reading_delta": "검침 변화 최대값"
         }
       },
       "sms_confirm": {
@@ -50,7 +51,8 @@
           "tid": "X-TID",
           "submit_day": "자가검침일",
           "submit_time": "자가검침 시간",
-          "reading_entity_id": "가스미터 현재값 엔티티"
+          "reading_entity_id": "가스미터 현재값 엔티티",
+          "max_reading_delta": "검침 변화 최대값"
         }
       }
     },
@@ -72,7 +74,8 @@
           "poll_interval": "조회 주기(분)",
           "submit_day": "자가검침일",
           "submit_time": "자가검침 시간",
-          "reading_entity_id": "가스미터 현재값 엔티티"
+          "reading_entity_id": "가스미터 현재값 엔티티",
+          "max_reading_delta": "검침 변화 최대값"
         }
       }
     }

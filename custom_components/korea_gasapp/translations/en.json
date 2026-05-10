@@ -15,7 +15,8 @@
           "mobile_co": "Mobile carrier",
           "submit_day": "Meter reading day",
           "submit_time": "Meter reading time",
-          "reading_entity_id": "Meter reading entity"
+          "reading_entity_id": "Meter reading entity",
+          "max_reading_delta": "Maximum meter reading change"
         }
       },
       "sms_confirm": {
@@ -50,7 +51,8 @@
           "tid": "X-TID",
           "submit_day": "Meter reading day",
           "submit_time": "Meter reading time",
-          "reading_entity_id": "Meter reading entity"
+          "reading_entity_id": "Meter reading entity",
+          "max_reading_delta": "Maximum meter reading change"
         }
       }
     },
@@ -72,7 +74,8 @@
           "poll_interval": "Polling interval in minutes",
           "submit_day": "Meter reading day",
           "submit_time": "Meter reading time",
-          "reading_entity_id": "Meter reading entity"
+          "reading_entity_id": "Meter reading entity",
+          "max_reading_delta": "Maximum meter reading change"
         }
       }
     }
