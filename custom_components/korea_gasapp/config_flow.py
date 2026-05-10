@@ -23,24 +23,16 @@ from .const import (
     CONF_DEVICE_ID,
     CONF_DEVICE_NAME,
     CONF_MEMBER_NO,
-    CONF_MAX_READING_DELTA,
     CONF_OS_VERSION,
     CONF_PLATFORM,
-    CONF_POLL_INTERVAL,
     CONF_READING_ENTITY_ID,
     CONF_READING_ROUND,
-    CONF_SUBMIT_DAY,
-    CONF_SUBMIT_TIME,
     CONF_TID,
     CONF_USER_AGENT,
     CONF_USE_CONTRACT_NUM,
     DEFAULT_APP_PLATFORM,
     DEFAULT_APP_VERSION,
-    DEFAULT_MAX_READING_DELTA,
-    DEFAULT_POLL_INTERVAL,
     DEFAULT_READING_ROUND,
-    DEFAULT_SUBMIT_DAY,
-    DEFAULT_SUBMIT_TIME,
     DOMAIN,
     READING_ROUND_DOWN,
     READING_ROUND_UP,
@@ -84,32 +76,15 @@ _READING_ROUND_SELECTOR = selector.SelectSelector(
     )
 )
 
-
+# The only user-configurable reading fields kept after the simplification.
 def _reading_fields(defaults: dict[str, Any] | None = None) -> dict[vol.Marker, Any]:
-    """Return common reading-submission config fields with optional default overrides."""
     d = defaults or {}
     return {
-        vol.Required(
-            CONF_SUBMIT_DAY,
-            default=d.get(CONF_SUBMIT_DAY, DEFAULT_SUBMIT_DAY),
-        ): selector.NumberSelector(
-            selector.NumberSelectorConfig(min=1, max=31, mode=selector.NumberSelectorMode.BOX)
-        ),
-        vol.Required(
-            CONF_SUBMIT_TIME,
-            default=d.get(CONF_SUBMIT_TIME, DEFAULT_SUBMIT_TIME),
-        ): selector.TimeSelector(),
         vol.Required(
             CONF_READING_ENTITY_ID,
             default=d.get(CONF_READING_ENTITY_ID, ""),
         ): selector.EntitySelector(
             selector.EntitySelectorConfig(domain=["input_number", "number", "sensor"])
-        ),
-        vol.Required(
-            CONF_MAX_READING_DELTA,
-            default=d.get(CONF_MAX_READING_DELTA, DEFAULT_MAX_READING_DELTA),
-        ): selector.NumberSelector(
-            selector.NumberSelectorConfig(min=0, max=10000, mode=selector.NumberSelectorMode.BOX)
         ),
         vol.Required(
             CONF_READING_ROUND,
@@ -350,10 +325,7 @@ class KoreaGasAppConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_DEVICE_ID: login[CONF_DEVICE_ID],
             CONF_USER_AGENT: IOS_USER_AGENT,
             CONF_ADID: login[CONF_ADID],
-            CONF_SUBMIT_DAY: login[CONF_SUBMIT_DAY],
-            CONF_SUBMIT_TIME: login[CONF_SUBMIT_TIME],
             CONF_READING_ENTITY_ID: login[CONF_READING_ENTITY_ID],
-            CONF_MAX_READING_DELTA: login[CONF_MAX_READING_DELTA],
             CONF_READING_ROUND: login.get(CONF_READING_ROUND, DEFAULT_READING_ROUND),
         }
         return self.async_create_entry(title=_contract_label(contract), data=data)
@@ -397,7 +369,11 @@ class KoreaGasAppConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class KoreaGasAppOptionsFlow(config_entries.OptionsFlow):
-    """Handle Korea Gas App options."""
+    """Handle Korea Gas App options.
+
+    Only the meter-reading entity and rounding method are user-configurable.
+    Schedule, delta, and polling interval are fixed automatically.
+    """
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._config_entry = config_entry
@@ -416,21 +392,12 @@ class KoreaGasAppOptionsFlow(config_entries.OptionsFlow):
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        CONF_POLL_INTERVAL,
-                        default=_opt(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL),
-                    ): vol.All(vol.Coerce(int), vol.Range(min=5, max=1440)),
-                    **_reading_fields(
-                        {
-                            CONF_SUBMIT_DAY: _opt(CONF_SUBMIT_DAY, DEFAULT_SUBMIT_DAY),
-                            CONF_SUBMIT_TIME: _opt(CONF_SUBMIT_TIME, DEFAULT_SUBMIT_TIME),
-                            CONF_READING_ENTITY_ID: _opt(CONF_READING_ENTITY_ID, ""),
-                            CONF_MAX_READING_DELTA: _opt(CONF_MAX_READING_DELTA, DEFAULT_MAX_READING_DELTA),
-                            CONF_READING_ROUND: _opt(CONF_READING_ROUND, DEFAULT_READING_ROUND),
-                        }
-                    ),
-                }
+                _reading_fields(
+                    {
+                        CONF_READING_ENTITY_ID: _opt(CONF_READING_ENTITY_ID, ""),
+                        CONF_READING_ROUND: _opt(CONF_READING_ROUND, DEFAULT_READING_ROUND),
+                    }
+                )
             ),
         )
 
