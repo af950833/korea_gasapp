@@ -1,0 +1,95 @@
+{
+  "title": "Korea Gas App",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Korea Gas App"
+      },
+      "sms_login": {
+        "title": "가스앱 SMS 인증",
+        "description": "가스앱에서 입력하는 본인인증 정보를 입력하세요. 주민등록번호는 앞 6자리와 하이픈 뒤 첫 자리만 입력합니다. 예: 950301-1. 이 값들은 설정 과정에서만 사용하고 구성 항목에 저장하지 않습니다.",
+        "data": {
+          "name": "이름",
+          "mobile_no": "휴대폰 번호",
+          "identity_no": "주민등록번호 앞부분 (예: 950301-1)",
+          "mobile_co": "통신사",
+          "submit_day": "자가검침일",
+          "submit_time": "자가검침 시간",
+          "reading_entity_id": "가스미터 현재값 엔티티"
+        }
+      },
+      "sms_confirm": {
+        "title": "SMS 인증번호 입력",
+        "data": {
+          "otp": "인증번호"
+        }
+      },
+      "contract": {
+        "title": "가스 계약 선택",
+        "data": {
+          "use_contract_num": "가스 계약"
+        }
+      },
+      "manual_session": {
+        "title": "가스앱 세션 정보",
+        "description": "모바일 앱 세션에서 확인한 계정 식별값을 입력하세요.",
+        "data": {
+          "account_id": "계정 ID",
+          "use_contract_num": "사용계약번호",
+          "customer_no": "고객번호",
+          "auth_token": "X-TOKEN",
+          "member_no": "X-MEMBER",
+          "company_code": "X-COMPANY",
+          "platform": "X-PLATFORM",
+          "app_version": "X-VERSION",
+          "os_version": "X-OS-VERSION",
+          "device_name": "X-DEVICE-NAME",
+          "device_id": "X-DEVID",
+          "user_agent": "User-Agent",
+          "adid": "X-ADID",
+          "tid": "X-TID",
+          "submit_day": "자가검침일",
+          "submit_time": "자가검침 시간",
+          "reading_entity_id": "가스미터 현재값 엔티티"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "필수 가스앱 세션 값이 없습니다.",
+      "invalid_identity_no": "주민등록번호 앞부분을 950301-1 형식으로 입력하세요.",
+      "invalid_otp": "인증번호가 거부되었습니다.",
+      "login_failed": "가스앱 로그인 요청에 실패했습니다.",
+      "missing_contract": "사용계약번호 또는 고객번호를 입력하세요.",
+      "no_contract": "이 계정에서 가스 계약을 찾지 못했습니다.",
+      "sms_request_failed": "SMS 인증번호를 요청하지 못했습니다."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Korea Gas App 옵션",
+        "data": {
+          "poll_interval": "조회 주기(분)",
+          "submit_day": "자가검침일",
+          "submit_time": "자가검침 시간",
+          "reading_entity_id": "가스미터 현재값 엔티티"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "latest_bill_charge": {
+        "name": "최근 가스 청구금액"
+      },
+      "last_meter_reading": {
+        "name": "마지막 가스 검침값"
+      }
+    },
+    "binary_sensor": {
+      "self_input_available": {
+        "name": "자가검침 가능"
+      }
+    }
+  }
+}
