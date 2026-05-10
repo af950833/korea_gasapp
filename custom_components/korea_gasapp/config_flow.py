@@ -23,6 +23,7 @@ from .const import (
     CONF_DEVICE_ID,
     CONF_DEVICE_NAME,
     CONF_MEMBER_NO,
+    CONF_MAX_READING_DELTA,
     CONF_OS_VERSION,
     CONF_PLATFORM,
     CONF_POLL_INTERVAL,
@@ -34,6 +35,7 @@ from .const import (
     CONF_USE_CONTRACT_NUM,
     DEFAULT_APP_PLATFORM,
     DEFAULT_APP_VERSION,
+    DEFAULT_MAX_READING_DELTA,
     DEFAULT_POLL_INTERVAL,
     DEFAULT_SUBMIT_DAY,
     DEFAULT_SUBMIT_TIME,
@@ -137,6 +139,16 @@ class KoreaGasAppConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             domain=["input_number", "number", "sensor"]
                         )
                     ),
+                    vol.Required(
+                        CONF_MAX_READING_DELTA,
+                        default=DEFAULT_MAX_READING_DELTA,
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=0,
+                            max=10000,
+                            mode=selector.NumberSelectorMode.BOX,
+                        )
+                    ),
                 }
             ),
             errors=errors,
@@ -207,6 +219,16 @@ class KoreaGasAppConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     vol.Required(CONF_READING_ENTITY_ID): selector.EntitySelector(
                         selector.EntitySelectorConfig(
                             domain=["input_number", "number", "sensor"]
+                        )
+                    ),
+                    vol.Required(
+                        CONF_MAX_READING_DELTA,
+                        default=DEFAULT_MAX_READING_DELTA,
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=0,
+                            max=10000,
+                            mode=selector.NumberSelectorMode.BOX,
                         )
                     ),
                 }
@@ -397,6 +419,7 @@ class KoreaGasAppConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_SUBMIT_DAY: login[CONF_SUBMIT_DAY],
             CONF_SUBMIT_TIME: login[CONF_SUBMIT_TIME],
             CONF_READING_ENTITY_ID: login[CONF_READING_ENTITY_ID],
+            CONF_MAX_READING_DELTA: login[CONF_MAX_READING_DELTA],
         }
         return self.async_create_entry(title=_contract_label(contract), data=data)
 
@@ -524,6 +547,22 @@ class KoreaGasAppOptionsFlow(config_entries.OptionsFlow):
                     ): selector.EntitySelector(
                         selector.EntitySelectorConfig(
                             domain=["input_number", "number", "sensor"]
+                        )
+                    ),
+                    vol.Optional(
+                        CONF_MAX_READING_DELTA,
+                        default=self._config_entry.options.get(
+                            CONF_MAX_READING_DELTA,
+                            self._config_entry.data.get(
+                                CONF_MAX_READING_DELTA,
+                                DEFAULT_MAX_READING_DELTA,
+                            ),
+                        ),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=0,
+                            max=10000,
+                            mode=selector.NumberSelectorMode.BOX,
                         )
                     ),
                 }

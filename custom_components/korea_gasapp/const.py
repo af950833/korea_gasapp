@@ -11,6 +11,7 @@ CONF_CUSTOMER_NO = "customer_no"
 CONF_DEVICE_ID = "device_id"
 CONF_DEVICE_NAME = "device_name"
 CONF_MEMBER_NO = "member_no"
+CONF_MAX_READING_DELTA = "max_reading_delta"
 CONF_OS_VERSION = "os_version"
 CONF_PLATFORM = "platform"
 CONF_POLL_INTERVAL = "poll_interval"
@@ -22,6 +23,7 @@ CONF_USER_AGENT = "user_agent"
 CONF_USE_CONTRACT_NUM = "use_contract_num"
 
 DEFAULT_POLL_INTERVAL = 60
+DEFAULT_MAX_READING_DELTA = 500
 DEFAULT_SUBMIT_DAY = 5
 DEFAULT_SUBMIT_TIME = "08:00:00"
 

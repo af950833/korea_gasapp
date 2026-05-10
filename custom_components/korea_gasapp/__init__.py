@@ -19,11 +19,13 @@ from .api import KoreaGasAppApiError, KoreaGasAppClient
 from .const import (
     CONF_ACCOUNT_ID,
     CONF_CUSTOMER_NO,
+    CONF_MAX_READING_DELTA,
     CONF_POLL_INTERVAL,
     CONF_READING_ENTITY_ID,
     CONF_SUBMIT_DAY,
     CONF_SUBMIT_TIME,
     CONF_USE_CONTRACT_NUM,
+    DEFAULT_MAX_READING_DELTA,
     DEFAULT_POLL_INTERVAL,
     DEFAULT_SUBMIT_DAY,
     DEFAULT_SUBMIT_TIME,
@@ -74,6 +76,7 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
 
         entry = entries[0]
         coordinator = entry.runtime_data
+        _validate_reading_range(entry, coordinator, call.data[ATTR_READING])
         try:
             result = await coordinator.client.async_submit_meter_reading(
                 call.data[ATTR_READING],
@@ -188,6 +191,12 @@ def _schedule_auto_submission(
             return
 
         try:
+            _validate_reading_range(entry, coordinator, reading)
+        except HomeAssistantError as err:
+            _LOGGER.warning("Skipping Korea Gas App auto submission: %s", err)
+            return
+
+        try:
             result = await coordinator.client.async_submit_meter_reading(reading)
         except KoreaGasAppApiError as err:
             _LOGGER.error("Korea Gas App auto submission failed: %s", err)
@@ -223,6 +232,31 @@ def _entry_value(
 ) -> Any:
     """Return an option value, falling back to config-entry data."""
     return entry.options.get(key, entry.data.get(key, default))
+
+
+def _validate_reading_range(
+    entry: KoreaGasAppConfigEntry,
+    coordinator: KoreaGasAppDataUpdateCoordinator,
+    reading: int,
+) -> None:
+    """Validate a submitted reading against the latest meter reading."""
+    if coordinator.data is None or coordinator.data.last_meter_reading_m3 is None:
+        raise HomeAssistantError(
+            "Cannot validate meter reading because last meter reading is unavailable"
+        )
+
+    last_reading = int(coordinator.data.last_meter_reading_m3)
+    max_delta = int(
+        _entry_value(entry, CONF_MAX_READING_DELTA, DEFAULT_MAX_READING_DELTA)
+    )
+    max_reading = last_reading + max_delta
+    if last_reading <= reading <= max_reading:
+        return
+
+    raise HomeAssistantError(
+        f"Meter reading {reading} is outside allowed range "
+        f"{last_reading}-{max_reading}"
+    )
 
 
 def _parse_submit_time(value: Any) -> time:
