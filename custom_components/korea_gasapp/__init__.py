@@ -71,16 +71,31 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
 
         entry = entries[0]
         coordinator = entry.runtime_data
-        _validate_reading_range(entry, coordinator, call.data[ATTR_READING])
+        reading: int = call.data[ATTR_READING]
+
         try:
-            result = await coordinator.client.async_submit_meter_reading(call.data[ATTR_READING])
+            _validate_reading_range(coordinator, reading)
+        except HomeAssistantError as err:
+            _update_sensor_failure(coordinator, reading=reading, reason=str(err), source="manual")
+            raise
+
+        try:
+            result = await coordinator.client.async_submit_meter_reading(reading)
         except KoreaGasAppApiError as err:
+            _update_sensor_failure(coordinator, reading=reading, reason=str(err), source="manual")
             raise HomeAssistantError(str(err)) from err
+
         _LOGGER.info(
-            "Submitted Korea Gas App meter reading: input_yn=%s usage=%s message=%s",
+            "Submitted Korea Gas App meter reading (manual): input_yn=%s usage=%s message=%s",
             result.input_yn,
             result.usage,
             result.return_message,
+        )
+        _update_sensor_success(
+            coordinator,
+            reading=reading,
+            message=result.return_message,
+            source="manual",
         )
         await coordinator.async_request_refresh()
 
@@ -136,21 +151,21 @@ def _schedule_daily(
     entry: KoreaGasAppConfigEntry,
     coordinator: KoreaGasAppDataUpdateCoordinator,
 ) -> CALLBACK_TYPE:
-    """Register a single daily callback at FIXED_UPDATE_HOUR:MM:SS (local time).
+    """Register a single daily callback at 08:00 local time.
 
-    At 08:00 each day this callback:
-      1. Refreshes all coordinator data (billing + indication info).
-      2. If today is the self-reading submission day (period_start + 1),
-         submits the meter reading automatically.
+    At 08:00 each day:
+      1. Refresh all coordinator data.
+      2. If today is period_start + 1, attempt auto self-reading submission.
+         On success → sensor on, on any failure → sensor off with reason.
     """
     reading_round = _entry_value(entry, CONF_READING_ROUND, DEFAULT_READING_ROUND)
 
     async def _handle_daily(now: datetime) -> None:
-        # ── 1. Refresh data ──────────────────────────────────────────────
-        _LOGGER.debug("Korea Gas App daily refresh triggered for entry %s", entry.title)
+        # 1. Refresh data
+        _LOGGER.debug("Korea Gas App daily refresh for '%s'", entry.title)
         await coordinator.async_request_refresh()
 
-        # ── 2. Auto self-reading submission ──────────────────────────────
+        # 2. Auto submission guard
         if coordinator.data is None:
             return
         if not coordinator.data.indication.self_reading_registered:
@@ -162,54 +177,58 @@ def _schedule_daily(
 
         entity_id = _entry_value(entry, CONF_READING_ENTITY_ID)
         if not entity_id:
-            _LOGGER.warning(
-                "Skipping Korea Gas App auto submission: no reading entity configured"
-            )
+            reason = "자가검침 엔티티가 설정되지 않았습니다."
+            _LOGGER.warning("Skipping auto submission: %s", reason)
+            _update_sensor_failure(coordinator, reading=None, reason=reason, source="auto")
             return
 
         state = hass.states.get(entity_id)
         if state is None:
-            _LOGGER.warning(
-                "Skipping Korea Gas App auto submission: entity %s not found", entity_id
-            )
+            reason = f"엔티티 {entity_id}를 찾을 수 없습니다."
+            _LOGGER.warning("Skipping auto submission: %s", reason)
+            _update_sensor_failure(coordinator, reading=None, reason=reason, source="auto")
             return
 
         reading = _state_to_reading(state.state, reading_round)
         if reading is None:
-            _LOGGER.warning(
-                "Skipping Korea Gas App auto submission: entity %s has non-numeric state %s",
-                entity_id,
-                state.state,
-            )
+            reason = f"엔티티 {entity_id}의 상태값({state.state})을 숫자로 변환할 수 없습니다."
+            _LOGGER.warning("Skipping auto submission: %s", reason)
+            _update_sensor_failure(coordinator, reading=None, reason=reason, source="auto")
             return
 
         try:
-            _validate_reading_range(entry, coordinator, reading)
+            _validate_reading_range(coordinator, reading)
         except HomeAssistantError as err:
-            _LOGGER.warning("Skipping Korea Gas App auto submission: %s", err)
+            reason = str(err)
+            _LOGGER.warning("Skipping auto submission: %s", reason)
+            _update_sensor_failure(coordinator, reading=reading, reason=reason, source="auto")
             return
 
         try:
             result = await coordinator.client.async_submit_meter_reading(reading)
         except KoreaGasAppApiError as err:
-            _LOGGER.error("Korea Gas App auto submission failed: %s", err)
+            reason = str(err)
+            _LOGGER.error("Auto submission failed: %s", reason)
+            _update_sensor_failure(coordinator, reading=reading, reason=reason, source="auto")
             return
 
         _LOGGER.info(
-            "Korea Gas App auto submission succeeded: reading=%s usage=%s message=%s",
+            "Auto submission succeeded: reading=%s usage=%s message=%s",
             result.this_month_indicator,
             result.usage,
             result.return_message,
         )
-        # Refresh again so sensors reflect the submitted reading
+        _update_sensor_success(
+            coordinator,
+            reading=reading,
+            message=result.return_message,
+            source="auto",
+        )
         await coordinator.async_request_refresh()
 
     _LOGGER.info(
-        "Scheduled Korea Gas App daily update at %02d:%02d:%02d for entry '%s'",
-        FIXED_UPDATE_HOUR,
-        FIXED_UPDATE_MINUTE,
-        FIXED_UPDATE_SECOND,
-        entry.title,
+        "Scheduled Korea Gas App daily update at %02d:%02d:%02d for '%s'",
+        FIXED_UPDATE_HOUR, FIXED_UPDATE_MINUTE, FIXED_UPDATE_SECOND, entry.title,
     )
     return async_track_time_change(
         hass,
@@ -220,11 +239,41 @@ def _schedule_daily(
     )
 
 
-def _resolve_submit_day(coordinator: KoreaGasAppDataUpdateCoordinator) -> int | None:
-    """Return the day-of-month on which to submit the reading (period_start + 1).
+# --------------------------------------------------------------------------- #
+# Sensor update helpers                                                         #
+# --------------------------------------------------------------------------- #
 
-    Returns None when period_start is unavailable, which suppresses submission.
-    """
+def _update_sensor_success(
+    coordinator: KoreaGasAppDataUpdateCoordinator,
+    *,
+    reading: int,
+    message: str | None,
+    source: str,
+) -> None:
+    sensor = coordinator.submission_result_sensor
+    if sensor is None:
+        return
+    sensor.set_success(reading=reading, message=message, source=source)
+
+
+def _update_sensor_failure(
+    coordinator: KoreaGasAppDataUpdateCoordinator,
+    *,
+    reading: int | None,
+    reason: str,
+    source: str,
+) -> None:
+    sensor = coordinator.submission_result_sensor
+    if sensor is None:
+        return
+    sensor.set_failure(reading=reading, reason=reason, source=source)
+
+
+# --------------------------------------------------------------------------- #
+# Pure helpers                                                                  #
+# --------------------------------------------------------------------------- #
+
+def _resolve_submit_day(coordinator: KoreaGasAppDataUpdateCoordinator) -> int | None:
     if coordinator.data is None:
         return None
     period_start = coordinator.data.indication.period_start
@@ -241,22 +290,20 @@ def _entry_value(entry: KoreaGasAppConfigEntry, key: str, default: Any = None) -
 
 
 def _validate_reading_range(
-    entry: KoreaGasAppConfigEntry,
     coordinator: KoreaGasAppDataUpdateCoordinator,
     reading: int,
 ) -> None:
-    """Validate submitted reading is within [last, last + 500]."""
+    """Raise HomeAssistantError when reading is outside [last, last+500]."""
     if coordinator.data is None or coordinator.data.last_meter_reading_m3 is None:
         raise HomeAssistantError(
-            "Cannot validate meter reading because last meter reading is unavailable"
+            "최근 검침값을 가져올 수 없어 범위 검증이 불가능합니다."
         )
     last_reading = int(coordinator.data.last_meter_reading_m3)
-    # Hard-coded maximum delta of 500 m³ (no longer user-configurable)
     max_reading = last_reading + 500
     if last_reading <= reading <= max_reading:
         return
     raise HomeAssistantError(
-        f"Meter reading {reading} is outside allowed range {last_reading}–{max_reading}"
+        f"검침값 {reading}이 허용 범위({last_reading}–{max_reading}) 밖입니다."
     )
 
 
