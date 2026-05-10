@@ -7,8 +7,7 @@
         "title": "Korea Gas App SMS verification",
         "description": "Enter the same identity fields used by the Gas App. For resident number, enter only the first 6 digits and the first digit after the dash, for example 950301-1. These values are used only during setup and are not stored in the config entry.",
         "data": {
-          "name": "Name",
-          "mobile_no": "Mobile number",
+          "name": "Name", "mobile_no": "Mobile number",
           "identity_no": "Resident number front part (ex: 950301-1)",
           "mobile_co": "Mobile carrier",
           "reading_entity_id": "Meter reading entity",
@@ -27,20 +26,13 @@
         "title": "Korea Gas App session values",
         "description": "Enter the account identifiers discovered from the mobile app session.",
         "data": {
-          "account_id": "Account ID",
-          "use_contract_num": "Use contract number",
-          "customer_no": "Customer number",
-          "auth_token": "X-TOKEN",
-          "member_no": "X-MEMBER",
-          "company_code": "X-COMPANY",
-          "platform": "X-PLATFORM",
-          "app_version": "X-VERSION",
-          "os_version": "X-OS-VERSION",
-          "device_name": "X-DEVICE-NAME",
-          "device_id": "X-DEVID",
-          "user_agent": "User-Agent",
-          "adid": "X-ADID",
-          "tid": "X-TID",
+          "account_id": "Account ID", "use_contract_num": "Use contract number",
+          "customer_no": "Customer number", "auth_token": "X-TOKEN",
+          "member_no": "X-MEMBER", "company_code": "X-COMPANY",
+          "platform": "X-PLATFORM", "app_version": "X-VERSION",
+          "os_version": "X-OS-VERSION", "device_name": "X-DEVICE-NAME",
+          "device_id": "X-DEVID", "user_agent": "User-Agent",
+          "adid": "X-ADID", "tid": "X-TID",
           "reading_entity_id": "Meter reading entity",
           "reading_round": "Rounding method"
         }
@@ -70,8 +62,8 @@
   "entity": {
     "sensor": {
       "current_bill_charge": { "name": "Current bill gas charge" },
-      "annual_bill_charge": { "name": "Annual bill gas charge" },
-      "indication_history": { "name": "Gas meter indication history" }
+      "annual_bill_charge":  { "name": "Annual bill gas charge" },
+      "indication_history":  { "name": "Gas meter indication history" }
     },
     "binary_sensor": {
       "submission_result": { "name": "Gas meter submission result" }
