@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
 import logging
 
 from homeassistant.core import HomeAssistant
@@ -15,19 +14,23 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class KoreaGasAppDataUpdateCoordinator(DataUpdateCoordinator[GasUsageSnapshot]):
-    """Coordinate polling Korea Gas App data."""
+    """Coordinate Korea Gas App data.
+
+    Data is refreshed once a day at 08:00 by a time-change listener set up in
+    __init__.py.  The update_interval is intentionally left as None so the
+    coordinator never polls on its own schedule.
+    """
 
     def __init__(
         self,
         hass: HomeAssistant,
         client: KoreaGasAppClient,
-        poll_interval_minutes: int,
     ) -> None:
         super().__init__(
             hass,
             logger=_LOGGER,
             name=DOMAIN,
-            update_interval=timedelta(minutes=poll_interval_minutes),
+            update_interval=None,   # driven by fixed-time trigger, not interval
         )
         self.client = client
 
