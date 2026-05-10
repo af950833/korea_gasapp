@@ -44,7 +44,6 @@ type KoreaGasAppConfigEntry = ConfigEntry[KoreaGasAppDataUpdateCoordinator]
 _LOGGER = logging.getLogger(__name__)
 
 SERVICE_SUBMIT_METER_READING = "submit_meter_reading"
-
 ATTR_ACCOUNT = "account"
 ATTR_READING = "reading"
 
@@ -60,7 +59,6 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     """Set up Korea Gas App services."""
 
     async def handle_submit_meter_reading(call: ServiceCall) -> None:
-        """Handle the meter reading submission service."""
         account = call.data.get(ATTR_ACCOUNT)
         entries = [
             entry
@@ -68,23 +66,19 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             if entry.state is ConfigEntryState.LOADED
         ]
         if account is not None:
-            entries = [
-                entry for entry in entries if _entry_matches_account(entry, account)
-            ]
+            entries = [e for e in entries if _entry_matches_account(e, account)]
         if not entries:
             raise HomeAssistantError("No loaded Korea Gas App config entry found")
         if len(entries) > 1:
             raise HomeAssistantError(
-                "Multiple Korea Gas App entries found; pass account"
+                "Multiple Korea Gas App entries found; pass account to specify one"
             )
 
         entry = entries[0]
         coordinator = entry.runtime_data
         _validate_reading_range(entry, coordinator, call.data[ATTR_READING])
         try:
-            result = await coordinator.client.async_submit_meter_reading(
-                call.data[ATTR_READING],
-            )
+            result = await coordinator.client.async_submit_meter_reading(call.data[ATTR_READING])
         except KoreaGasAppApiError as err:
             raise HomeAssistantError(str(err)) from err
         _LOGGER.info(
@@ -105,7 +99,6 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
 
 
 def _entry_matches_account(entry: ConfigEntry, account: str) -> bool:
-    """Return whether a config entry matches a user-facing account value."""
     normalized = account.strip()
     account_id = entry.data.get(CONF_ACCOUNT_ID)
     use_contract_num = entry.data.get(CONF_USE_CONTRACT_NUM)
@@ -117,13 +110,10 @@ def _entry_matches_account(entry: ConfigEntry, account: str) -> bool:
         customer_no,
         f"Gas account {use_contract_num or customer_no or account_id}",
     }
-    return normalized in {str(value) for value in values if value not in (None, "")}
+    return normalized in {str(v) for v in values if v not in (None, "")}
 
 
-async def async_setup_entry(
-    hass: HomeAssistant,
-    entry: KoreaGasAppConfigEntry,
-) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: KoreaGasAppConfigEntry) -> bool:
     """Set up Korea Gas App from a config entry."""
     poll_interval = entry.options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
     client = KoreaGasAppClient.from_config_entry(hass, entry)
@@ -139,19 +129,11 @@ async def async_setup_entry(
     return True
 
 
-async def async_unload_entry(
-    hass: HomeAssistant,
-    entry: KoreaGasAppConfigEntry,
-) -> bool:
-    """Unload a config entry."""
+async def async_unload_entry(hass: HomeAssistant, entry: KoreaGasAppConfigEntry) -> bool:
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
-async def _async_update_listener(
-    hass: HomeAssistant,
-    entry: KoreaGasAppConfigEntry,
-) -> None:
-    """Reload the integration when options change."""
+async def _async_update_listener(hass: HomeAssistant, entry: KoreaGasAppConfigEntry) -> None:
     await hass.config_entries.async_reload(entry.entry_id)
 
 
@@ -160,13 +142,11 @@ def _schedule_auto_submission(
     entry: KoreaGasAppConfigEntry,
     coordinator: KoreaGasAppDataUpdateCoordinator,
 ) -> CALLBACK_TYPE:
-    """Schedule the monthly self-reading submission.
+    """Schedule monthly self-reading submission.
 
-    The submission fires at the configured time each day.
-    The actual submission only proceeds when today's date matches
-    the day after the period_start returned by relay/indications,
-    falling back to the user-configured submit_day if period_start
-    is not available.
+    Fires at the configured time every day; actual submission only proceeds when
+    today's date matches the day after period_start from relay/indications
+    (falls back to the user-configured submit_day when period_start is absent).
     """
     submit_time = _parse_submit_time(
         _entry_value(entry, CONF_SUBMIT_TIME, DEFAULT_SUBMIT_TIME)
@@ -175,7 +155,10 @@ def _schedule_auto_submission(
     reading_round = _entry_value(entry, CONF_READING_ROUND, DEFAULT_READING_ROUND)
 
     async def _handle_time(now: datetime) -> None:
-        # Determine the target submission date
+        # Only submit on accounts that have registered for self-reading
+        if coordinator.data and not coordinator.data.indication.self_reading_registered:
+            return
+
         target_day = _resolve_submit_day(coordinator, fallback_day)
         if now.day != target_day:
             return
@@ -190,8 +173,7 @@ def _schedule_auto_submission(
         state = hass.states.get(entity_id)
         if state is None:
             _LOGGER.warning(
-                "Skipping Korea Gas App auto submission: entity %s was not found",
-                entity_id,
+                "Skipping Korea Gas App auto submission: entity %s not found", entity_id
             )
             return
 
@@ -225,11 +207,11 @@ def _schedule_auto_submission(
         await coordinator.async_request_refresh()
 
     _LOGGER.info(
-        "Scheduled Korea Gas App auto submission at %s (fallback day=%s, round=%s) using %s",
+        "Scheduled Korea Gas App auto submission at %s (fallback day=%s, round=%s) using entity=%s",
         submit_time.isoformat(),
         fallback_day,
         reading_round,
-        _entry_value(entry, CONF_READING_ENTITY_ID, "no entity"),
+        _entry_value(entry, CONF_READING_ENTITY_ID, "none"),
     )
     return async_track_time_change(
         hass,
@@ -241,33 +223,21 @@ def _schedule_auto_submission(
 
 
 def _resolve_submit_day(
-    coordinator: KoreaGasAppDataUpdateCoordinator,
-    fallback_day: int,
+    coordinator: KoreaGasAppDataUpdateCoordinator, fallback_day: int
 ) -> int:
-    """Return the day-of-month on which to submit the reading.
-
-    Uses the day after period_start from the indication API, if available.
-    Falls back to the user-configured day.
-    """
+    """Return the target day-of-month for submission (period_start + 1 day)."""
     if coordinator.data is None:
         return fallback_day
     period_start = coordinator.data.indication.period_start
     if not period_start:
         return fallback_day
     try:
-        period_date = date.fromisoformat(period_start)
-        submit_date = period_date + timedelta(days=1)
-        return submit_date.day
+        return (date.fromisoformat(period_start) + timedelta(days=1)).day
     except (ValueError, TypeError):
         return fallback_day
 
 
-def _entry_value(
-    entry: KoreaGasAppConfigEntry,
-    key: str,
-    default: Any | None = None,
-) -> Any:
-    """Return an option value, falling back to config-entry data."""
+def _entry_value(entry: KoreaGasAppConfigEntry, key: str, default: Any = None) -> Any:
     return entry.options.get(key, entry.data.get(key, default))
 
 
@@ -276,45 +246,34 @@ def _validate_reading_range(
     coordinator: KoreaGasAppDataUpdateCoordinator,
     reading: int,
 ) -> None:
-    """Validate a submitted reading against the latest meter reading."""
     if coordinator.data is None or coordinator.data.last_meter_reading_m3 is None:
         raise HomeAssistantError(
             "Cannot validate meter reading because last meter reading is unavailable"
         )
-
     last_reading = int(coordinator.data.last_meter_reading_m3)
-    max_delta = int(
-        _entry_value(entry, CONF_MAX_READING_DELTA, DEFAULT_MAX_READING_DELTA)
-    )
+    max_delta = int(_entry_value(entry, CONF_MAX_READING_DELTA, DEFAULT_MAX_READING_DELTA))
     max_reading = last_reading + max_delta
     if last_reading <= reading <= max_reading:
         return
-
     raise HomeAssistantError(
-        f"Meter reading {reading} is outside allowed range "
-        f"{last_reading}-{max_reading}"
+        f"Meter reading {reading} is outside allowed range {last_reading}–{max_reading}"
     )
 
 
 def _parse_submit_time(value: Any) -> time:
-    """Parse a config-flow time value."""
     if isinstance(value, time):
         return value
-    parts = [int(part) for part in str(value).split(":")]
+    parts = [int(p) for p in str(value).split(":")]
     if len(parts) == 2:
         parts.append(0)
     return time(parts[0], parts[1], parts[2])
 
 
 def _state_to_reading(value: str, reading_round: str) -> int | None:
-    """Convert an entity state to a meter reading integer using ceil or floor."""
     if value in {"unknown", "unavailable", ""}:
         return None
     try:
         fval = float(value.replace(",", "").strip())
     except ValueError:
         return None
-
-    if reading_round == READING_ROUND_UP:
-        return math.ceil(fval)
-    return math.floor(fval)
+    return math.ceil(fval) if reading_round == READING_ROUND_UP else math.floor(fval)
