@@ -39,93 +39,90 @@ type KoreaGasAppConfigEntry = ConfigEntry[KoreaGasAppDataUpdateCoordinator]
 _LOGGER = logging.getLogger(__name__)
 
 SERVICE_SUBMIT_METER_READING = "submit_meter_reading"
-ATTR_ACCOUNT = "account"
-ATTR_READING = "reading"
+_ATTR_ACCOUNT = "account"
+_ATTR_READING = "reading"
 
-SUBMIT_METER_READING_SCHEMA = vol.Schema(
+_SUBMIT_SCHEMA = vol.Schema(
     {
-        vol.Optional(ATTR_ACCOUNT): cv.string,
-        vol.Required(ATTR_READING): vol.All(vol.Coerce(int), vol.Range(min=0)),
+        vol.Optional(_ATTR_ACCOUNT): cv.string,
+        vol.Required(_ATTR_READING): vol.All(vol.Coerce(int), vol.Range(min=0)),
     }
 )
 
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
-    """Set up Korea Gas App services."""
+    """Register the submit_meter_reading service."""
 
-    async def handle_submit_meter_reading(call: ServiceCall) -> None:
-        account = call.data.get(ATTR_ACCOUNT)
-        entries = [
-            entry
-            for entry in hass.config_entries.async_entries(DOMAIN)
-            if entry.state is ConfigEntryState.LOADED
-        ]
-        if account is not None:
-            entries = [e for e in entries if _entry_matches_account(e, account)]
-        if not entries:
-            raise HomeAssistantError("No loaded Korea Gas App config entry found")
-        if len(entries) > 1:
-            raise HomeAssistantError(
-                "Multiple Korea Gas App entries found; pass account to specify one"
-            )
-
-        entry = entries[0]
-        coordinator = entry.runtime_data
-        reading: int = call.data[ATTR_READING]
+    async def _handle_submit(call: ServiceCall) -> None:
+        coordinator = _resolve_coordinator(hass, call.data.get(_ATTR_ACCOUNT))
+        reading: int = call.data[_ATTR_READING]
 
         try:
             result = await coordinator.client.async_submit_meter_reading(reading)
         except KoreaGasAppApiError as err:
-            _update_sensor_failure(coordinator, reading=reading, reason=str(err), source="manual")
+            _notify_sensor_failure(coordinator, reading=reading, reason=str(err), source="manual")
             raise HomeAssistantError(str(err)) from err
 
         _LOGGER.info(
-            "Submitted Korea Gas App meter reading (manual): input_yn=%s usage=%s message=%s",
-            result.input_yn,
+            "Manual meter reading submitted: reading=%s usage=%s message=%s",
+            reading,
             result.usage,
             result.return_message,
         )
-        _update_sensor_success(
-            coordinator,
-            reading=reading,
-            message=result.return_message,
-            source="manual",
-        )
+        _notify_sensor_success(coordinator, reading=reading, message=result.return_message, source="manual")
         await coordinator.async_request_refresh()
 
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_SUBMIT_METER_READING,
-        handle_submit_meter_reading,
-        schema=SUBMIT_METER_READING_SCHEMA,
-    )
+    hass.services.async_register(DOMAIN, SERVICE_SUBMIT_METER_READING, _handle_submit, schema=_SUBMIT_SCHEMA)
     return True
 
 
+def _resolve_coordinator(
+    hass: HomeAssistant,
+    account: str | None,
+) -> KoreaGasAppDataUpdateCoordinator:
+    """Return the coordinator for the requested account, raising on ambiguity."""
+    loaded = [
+        entry
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.state is ConfigEntryState.LOADED
+    ]
+    if account is not None:
+        loaded = [e for e in loaded if _entry_matches_account(e, account)]
+
+    if not loaded:
+        raise HomeAssistantError("No loaded Korea Gas App config entry found")
+    if len(loaded) > 1:
+        raise HomeAssistantError(
+            "Multiple Korea Gas App entries match; pass 'account' to specify one"
+        )
+    return loaded[0].runtime_data
+
+
 def _entry_matches_account(entry: ConfigEntry, account: str) -> bool:
+    """Return True if the entry's identifiers contain the given account string."""
     normalized = account.strip()
-    account_id = entry.data.get(CONF_ACCOUNT_ID)
     use_contract_num = entry.data.get(CONF_USE_CONTRACT_NUM)
     customer_no = entry.data.get(CONF_CUSTOMER_NO)
-    values = {
+    account_id = entry.data.get(CONF_ACCOUNT_ID)
+    candidates = {
         entry.title,
         account_id,
         use_contract_num,
         customer_no,
         f"Gas account {use_contract_num or customer_no or account_id}",
     }
-    return normalized in {str(v) for v in values if v not in (None, "")}
+    return normalized in {str(v) for v in candidates if v not in (None, "")}
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: KoreaGasAppConfigEntry) -> bool:
-    """Set up Korea Gas App from a config entry."""
+    """Set up a Korea Gas App config entry."""
     client = KoreaGasAppClient.from_config_entry(hass, entry)
     coordinator = KoreaGasAppDataUpdateCoordinator(hass, client)
 
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
 
-    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+    entry.async_on_unload(entry.add_update_listener(_handle_options_update))
     entry.async_on_unload(_schedule_daily(hass, entry, coordinator))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -136,7 +133,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: KoreaGasAppConfigEntry)
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
-async def _async_update_listener(hass: HomeAssistant, entry: KoreaGasAppConfigEntry) -> None:
+async def _handle_options_update(hass: HomeAssistant, entry: KoreaGasAppConfigEntry) -> None:
+    """Reload the entry when options change so the new reading entity/round takes effect."""
     await hass.config_entries.async_reload(entry.entry_id)
 
 
@@ -145,137 +143,147 @@ def _schedule_daily(
     entry: KoreaGasAppConfigEntry,
     coordinator: KoreaGasAppDataUpdateCoordinator,
 ) -> CALLBACK_TYPE:
-    """Register a single daily callback at 08:00 local time.
+    """Register a time-change callback that fires once a day at FIXED_UPDATE_HOUR.
 
-    At 08:00 each day:
-      1. Refresh all coordinator data.
-      2. If today is period_start + 1, attempt auto self-reading submission.
-         On success → sensor on, on any failure → sensor off with reason.
+    Each day the callback:
+      1. Refreshes all coordinator data (bills + indication info).
+      2. If the account is registered for self-reading and today is
+         period_start + 1, attempts automatic submission.  Any outcome
+         (success or failure) is written to the submission-result sensor.
     """
     reading_round = _entry_value(entry, CONF_READING_ROUND, DEFAULT_READING_ROUND)
 
-    async def _handle_daily(now: datetime) -> None:
-        # 1. Refresh data
-        _LOGGER.debug("Korea Gas App daily refresh for '%s'", entry.title)
+    async def _daily_callback(now: datetime) -> None:
+        _LOGGER.debug("Daily refresh triggered for '%s'", entry.title)
         await coordinator.async_request_refresh()
-
-        # 2. Auto submission guard
-        if coordinator.data is None:
-            return
-        if not coordinator.data.indication.self_reading_registered:
-            return
-
-        target_day = _resolve_submit_day(coordinator)
-        if target_day is None or now.day != target_day:
-            return
-
-        entity_id = _entry_value(entry, CONF_READING_ENTITY_ID)
-        if not entity_id:
-            reason = "자가검침 엔티티가 설정되지 않았습니다."
-            _LOGGER.warning("Skipping auto submission: %s", reason)
-            _update_sensor_failure(coordinator, reading=None, reason=reason, source="auto")
-            return
-
-        state = hass.states.get(entity_id)
-        if state is None:
-            reason = f"엔티티 {entity_id}를 찾을 수 없습니다."
-            _LOGGER.warning("Skipping auto submission: %s", reason)
-            _update_sensor_failure(coordinator, reading=None, reason=reason, source="auto")
-            return
-
-        reading = _state_to_reading(state.state, reading_round)
-        if reading is None:
-            reason = f"엔티티 {entity_id}의 상태값({state.state})을 숫자로 변환할 수 없습니다."
-            _LOGGER.warning("Skipping auto submission: %s", reason)
-            _update_sensor_failure(coordinator, reading=None, reason=reason, source="auto")
-            return
-
-        try:
-            result = await coordinator.client.async_submit_meter_reading(reading)
-        except KoreaGasAppApiError as err:
-            reason = str(err)
-            _LOGGER.error("Auto submission failed: %s", reason)
-            _update_sensor_failure(coordinator, reading=reading, reason=reason, source="auto")
-            return
-
-        _LOGGER.info(
-            "Auto submission succeeded: reading=%s usage=%s message=%s",
-            result.this_month_indicator,
-            result.usage,
-            result.return_message,
-        )
-        _update_sensor_success(
-            coordinator,
-            reading=reading,
-            message=result.return_message,
-            source="auto",
-        )
-        await coordinator.async_request_refresh()
+        await _attempt_auto_submission(hass, entry, coordinator, now, reading_round)
 
     _LOGGER.info(
-        "Scheduled Korea Gas App daily update at %02d:%02d:%02d for '%s'",
+        "Scheduled daily update at %02d:%02d:%02d for entry '%s'",
         FIXED_UPDATE_HOUR, FIXED_UPDATE_MINUTE, FIXED_UPDATE_SECOND, entry.title,
     )
     return async_track_time_change(
         hass,
-        _handle_daily,
+        _daily_callback,
         hour=FIXED_UPDATE_HOUR,
         minute=FIXED_UPDATE_MINUTE,
         second=FIXED_UPDATE_SECOND,
     )
 
 
-# --------------------------------------------------------------------------- #
-# Sensor update helpers                                                         #
-# --------------------------------------------------------------------------- #
+async def _attempt_auto_submission(
+    hass: HomeAssistant,
+    entry: KoreaGasAppConfigEntry,
+    coordinator: KoreaGasAppDataUpdateCoordinator,
+    now: datetime,
+    reading_round: str,
+) -> None:
+    """Try to auto-submit a self-reading; write result to sensor regardless of outcome."""
+    if coordinator.data is None:
+        return
+    if not coordinator.data.indication.self_reading_registered:
+        return
 
-def _update_sensor_success(
+    submit_day = _resolve_submit_day(coordinator)
+    if submit_day is None or now.day != submit_day:
+        return
+
+    entity_id = _entry_value(entry, CONF_READING_ENTITY_ID)
+    if not entity_id:
+        _fail("자가검침 엔티티가 설정되지 않았습니다.", coordinator, reading=None)
+        return
+
+    state = hass.states.get(entity_id)
+    if state is None:
+        _fail(f"엔티티 {entity_id}를 찾을 수 없습니다.", coordinator, reading=None)
+        return
+
+    reading = _state_to_reading(state.state, reading_round)
+    if reading is None:
+        _fail(
+            f"엔티티 {entity_id}의 상태값({state.state!r})을 숫자로 변환할 수 없습니다.",
+            coordinator,
+            reading=None,
+        )
+        return
+
+    try:
+        result = await coordinator.client.async_submit_meter_reading(reading)
+    except KoreaGasAppApiError as err:
+        _LOGGER.error("Auto submission failed for '%s': %s", entry.title, err)
+        _notify_sensor_failure(coordinator, reading=reading, reason=str(err), source="auto")
+        return
+
+    _LOGGER.info(
+        "Auto submission succeeded for '%s': reading=%s usage=%s message=%s",
+        entry.title, reading, result.usage, result.return_message,
+    )
+    _notify_sensor_success(coordinator, reading=reading, message=result.return_message, source="auto")
+    await coordinator.async_request_refresh()
+
+
+def _fail(reason: str, coordinator: KoreaGasAppDataUpdateCoordinator, *, reading: int | None) -> None:
+    """Log a warning and record failure on the result sensor."""
+    _LOGGER.warning("Auto submission skipped: %s", reason)
+    _notify_sensor_failure(coordinator, reading=reading, reason=reason, source="auto")
+
+
+# ── Sensor notification helpers ───────────────────────────────────────────────
+
+def _notify_sensor_success(
     coordinator: KoreaGasAppDataUpdateCoordinator,
     *,
     reading: int,
     message: str | None,
     source: str,
 ) -> None:
-    sensor = coordinator.submission_result_sensor
-    if sensor is None:
-        return
-    sensor.set_success(reading=reading, message=message, source=source)
+    if coordinator.submission_result_sensor is not None:
+        coordinator.submission_result_sensor.set_success(
+            reading=reading, message=message, source=source
+        )
 
 
-def _update_sensor_failure(
+def _notify_sensor_failure(
     coordinator: KoreaGasAppDataUpdateCoordinator,
     *,
     reading: int | None,
     reason: str,
     source: str,
 ) -> None:
-    sensor = coordinator.submission_result_sensor
-    if sensor is None:
-        return
-    sensor.set_failure(reading=reading, reason=reason, source=source)
+    if coordinator.submission_result_sensor is not None:
+        coordinator.submission_result_sensor.set_failure(
+            reading=reading, reason=reason, source=source
+        )
 
 
-# --------------------------------------------------------------------------- #
-# Pure helpers                                                                  #
-# --------------------------------------------------------------------------- #
+# ── Pure helpers ──────────────────────────────────────────────────────────────
 
 def _resolve_submit_day(coordinator: KoreaGasAppDataUpdateCoordinator) -> int | None:
-    if coordinator.data is None:
-        return None
-    period_start = coordinator.data.indication.period_start
+    """Return the day-of-month on which to submit (period_start + 1).
+
+    Returns None when period_start is unavailable, suppressing auto-submission
+    for that day rather than guessing.
+    """
+    period_start = coordinator.data.indication.period_start if coordinator.data else None
     if not period_start:
         return None
     try:
         return (date.fromisoformat(period_start) + timedelta(days=1)).day
     except (ValueError, TypeError):
+        _LOGGER.warning("Could not parse period_start value: %r", period_start)
         return None
 
 
 def _entry_value(entry: KoreaGasAppConfigEntry, key: str, default: Any = None) -> Any:
+    """Read a value from options first, falling back to config-entry data."""
     return entry.options.get(key, entry.data.get(key, default))
 
 
 def _state_to_reading(value: str, reading_round: str) -> int | None:
+    """Convert an entity state string to an integer using the configured rounding.
+
+    Returns None for unavailable / non-numeric states.
+    """
     if value in {"unknown", "unavailable", ""}:
         return None
     try:
