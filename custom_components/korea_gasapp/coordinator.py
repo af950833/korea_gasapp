@@ -23,7 +23,6 @@ class KoreaGasAppDataUpdateCoordinator(DataUpdateCoordinator[GasUsageSnapshot]):
         client: KoreaGasAppClient,
         poll_interval_minutes: int,
     ) -> None:
-        """Initialize coordinator."""
         super().__init__(
             hass,
             logger=_LOGGER,
@@ -33,7 +32,6 @@ class KoreaGasAppDataUpdateCoordinator(DataUpdateCoordinator[GasUsageSnapshot]):
         self.client = client
 
     async def _async_update_data(self) -> GasUsageSnapshot:
-        """Fetch the newest data."""
         try:
             return await self.client.async_get_usage()
         except KoreaGasAppApiError as err:
