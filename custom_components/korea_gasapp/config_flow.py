@@ -1,4 +1,4 @@
-﻿"""Config flow for Korea Gas App."""
+"""Config flow for Korea Gas App."""
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ from .const import (
     CONF_PLATFORM,
     CONF_POLL_INTERVAL,
     CONF_READING_ENTITY_ID,
+    CONF_READING_ROUND,
     CONF_SUBMIT_DAY,
     CONF_SUBMIT_TIME,
     CONF_TID,
@@ -37,9 +38,12 @@ from .const import (
     DEFAULT_APP_VERSION,
     DEFAULT_MAX_READING_DELTA,
     DEFAULT_POLL_INTERVAL,
+    DEFAULT_READING_ROUND,
     DEFAULT_SUBMIT_DAY,
     DEFAULT_SUBMIT_TIME,
     DOMAIN,
+    READING_ROUND_DOWN,
+    READING_ROUND_UP,
 )
 
 CONF_BIRTHDAY = "birthday"
@@ -70,6 +74,50 @@ MOBILE_CO_OPTIONS = {
     "7": "LG U+ MVNO",
 }
 
+_READING_ROUND_SELECTOR = selector.SelectSelector(
+    selector.SelectSelectorConfig(
+        options=[
+            selector.SelectOptionDict(value=READING_ROUND_UP, label="올림 (ceil)"),
+            selector.SelectOptionDict(value=READING_ROUND_DOWN, label="내림 (floor)"),
+        ],
+        mode=selector.SelectSelectorMode.LIST,
+    )
+)
+
+
+def _reading_fields(defaults: dict[str, Any] | None = None) -> dict[vol.Marker, Any]:
+    """Return common reading-submission config fields with optional default overrides."""
+    d = defaults or {}
+    return {
+        vol.Required(
+            CONF_SUBMIT_DAY,
+            default=d.get(CONF_SUBMIT_DAY, DEFAULT_SUBMIT_DAY),
+        ): selector.NumberSelector(
+            selector.NumberSelectorConfig(min=1, max=31, mode=selector.NumberSelectorMode.BOX)
+        ),
+        vol.Required(
+            CONF_SUBMIT_TIME,
+            default=d.get(CONF_SUBMIT_TIME, DEFAULT_SUBMIT_TIME),
+        ): selector.TimeSelector(),
+        vol.Required(
+            CONF_READING_ENTITY_ID,
+            default=d.get(CONF_READING_ENTITY_ID, ""),
+        ): selector.EntitySelector(
+            selector.EntitySelectorConfig(domain=["input_number", "number", "sensor"])
+        ),
+        vol.Required(
+            CONF_MAX_READING_DELTA,
+            default=d.get(CONF_MAX_READING_DELTA, DEFAULT_MAX_READING_DELTA),
+        ): selector.NumberSelector(
+            selector.NumberSelectorConfig(min=0, max=10000, mode=selector.NumberSelectorMode.BOX)
+        ),
+        vol.Required(
+            CONF_READING_ROUND,
+            default=d.get(CONF_READING_ROUND, DEFAULT_READING_ROUND),
+        ): _READING_ROUND_SELECTOR,
+    }
+
+
 class KoreaGasAppConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Korea Gas App."""
 
@@ -80,85 +128,16 @@ class KoreaGasAppConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def async_get_options_flow(
         config_entry: config_entries.ConfigEntry,
     ) -> KoreaGasAppOptionsFlow:
-        """Create the options flow."""
         return KoreaGasAppOptionsFlow(config_entry)
 
     async def async_step_user(
-        self,
-        user_input: dict[str, Any] | None = None,
+        self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
-        """Handle the initial step."""
         return await self.async_step_sms_login(user_input)
 
-    async def async_step_manual_session(
-        self,
-        user_input: dict[str, Any] | None = None,
-    ) -> config_entries.ConfigFlowResult:
-        """Handle the manual session-value step."""
-        errors: dict[str, str] = {}
-
-        if user_input is not None:
-            errors, result = await self._async_validate_manual_session(user_input)
-            if result is not None:
-                return result
-
-        return self.async_show_form(
-            step_id="manual_session",
-            data_schema=vol.Schema(
-                {
-                    vol.Optional(CONF_ACCOUNT_ID): str,
-                    vol.Required(CONF_USE_CONTRACT_NUM): str,
-                    vol.Optional(CONF_CUSTOMER_NO, default=""): str,
-                    vol.Required(CONF_AUTH_TOKEN): str,
-                    vol.Required(CONF_MEMBER_NO): str,
-                    vol.Required(CONF_COMPANY_CODE): str,
-                    vol.Optional(CONF_PLATFORM, default=DEFAULT_APP_PLATFORM): str,
-                    vol.Optional(CONF_APP_VERSION, default=DEFAULT_APP_VERSION): str,
-                    vol.Optional(CONF_OS_VERSION): str,
-                    vol.Optional(CONF_DEVICE_NAME): str,
-                    vol.Optional(CONF_DEVICE_ID): str,
-                    vol.Optional(CONF_USER_AGENT): str,
-                    vol.Optional(CONF_ADID): str,
-                    vol.Optional(CONF_TID): str,
-                    vol.Required(
-                        CONF_SUBMIT_DAY,
-                        default=DEFAULT_SUBMIT_DAY,
-                    ): selector.NumberSelector(
-                        selector.NumberSelectorConfig(
-                            min=1,
-                            max=31,
-                            mode=selector.NumberSelectorMode.BOX,
-                        )
-                    ),
-                    vol.Required(
-                        CONF_SUBMIT_TIME,
-                        default=DEFAULT_SUBMIT_TIME,
-                    ): selector.TimeSelector(),
-                    vol.Required(CONF_READING_ENTITY_ID): selector.EntitySelector(
-                        selector.EntitySelectorConfig(
-                            domain=["input_number", "number", "sensor"]
-                        )
-                    ),
-                    vol.Required(
-                        CONF_MAX_READING_DELTA,
-                        default=DEFAULT_MAX_READING_DELTA,
-                    ): selector.NumberSelector(
-                        selector.NumberSelectorConfig(
-                            min=0,
-                            max=10000,
-                            mode=selector.NumberSelectorMode.BOX,
-                        )
-                    ),
-                }
-            ),
-            errors=errors,
-        )
-
     async def async_step_sms_login(
-        self,
-        user_input: dict[str, Any] | None = None,
+        self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
-        """Request an SMS verification code."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -194,6 +173,7 @@ class KoreaGasAppConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         "response_uniq_id": sms_result.response_uniq_id,
                     }
                     return await self.async_step_sms_confirm()
+
         return self.async_show_form(
             step_id="sms_login",
             data_schema=vol.Schema(
@@ -202,45 +182,15 @@ class KoreaGasAppConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     vol.Required(CONF_MOBILE_NO): str,
                     vol.Required(CONF_IDENTITY_NO): str,
                     vol.Required(CONF_MOBILE_CO): vol.In(MOBILE_CO_OPTIONS),
-                    vol.Required(
-                        CONF_SUBMIT_DAY,
-                        default=DEFAULT_SUBMIT_DAY,
-                    ): selector.NumberSelector(
-                        selector.NumberSelectorConfig(
-                            min=1,
-                            max=31,
-                            mode=selector.NumberSelectorMode.BOX,
-                        )
-                    ),
-                    vol.Required(
-                        CONF_SUBMIT_TIME,
-                        default=DEFAULT_SUBMIT_TIME,
-                    ): selector.TimeSelector(),
-                    vol.Required(CONF_READING_ENTITY_ID): selector.EntitySelector(
-                        selector.EntitySelectorConfig(
-                            domain=["input_number", "number", "sensor"]
-                        )
-                    ),
-                    vol.Required(
-                        CONF_MAX_READING_DELTA,
-                        default=DEFAULT_MAX_READING_DELTA,
-                    ): selector.NumberSelector(
-                        selector.NumberSelectorConfig(
-                            min=0,
-                            max=10000,
-                            mode=selector.NumberSelectorMode.BOX,
-                        )
-                    ),
+                    **_reading_fields(),
                 }
             ),
             errors=errors,
         )
 
     async def async_step_sms_confirm(
-        self,
-        user_input: dict[str, Any] | None = None,
+        self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
-        """Confirm an SMS verification code and create the config entry."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -296,15 +246,10 @@ class KoreaGasAppConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_contract(
-        self,
-        user_input: dict[str, Any] | None = None,
+        self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
-        """Let the user pick one contract when multiple are available."""
         contracts = self._sms_member["contracts"]
-        contract_map = {
-            _contract_key(contract): contract
-            for contract in contracts
-        }
+        contract_map = {_contract_key(c): c for c in contracts}
 
         if user_input is not None:
             return await self._async_create_sms_entry(
@@ -319,24 +264,105 @@ class KoreaGasAppConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema(
                 {
                     vol.Required(CONF_USE_CONTRACT_NUM): vol.In(
-                        {
-                            key: _contract_label(contract)
-                            for key, contract in contract_map.items()
-                        }
+                        {k: _contract_label(c) for k, c in contract_map.items()}
                     )
                 }
             ),
         )
 
-    async def _async_validate_manual_session(
-        self,
-        user_input: dict[str, Any],
-    ) -> tuple[dict[str, str], config_entries.ConfigFlowResult | None]:
-        """Validate manually supplied session values."""
+    async def async_step_manual_session(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
         errors: dict[str, str] = {}
-        unique_id = user_input.get(CONF_USE_CONTRACT_NUM) or user_input.get(
-            CONF_CUSTOMER_NO
+
+        if user_input is not None:
+            errors, result = await self._async_validate_manual_session(user_input)
+            if result is not None:
+                return result
+
+        return self.async_show_form(
+            step_id="manual_session",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(CONF_ACCOUNT_ID): str,
+                    vol.Required(CONF_USE_CONTRACT_NUM): str,
+                    vol.Optional(CONF_CUSTOMER_NO, default=""): str,
+                    vol.Required(CONF_AUTH_TOKEN): str,
+                    vol.Required(CONF_MEMBER_NO): str,
+                    vol.Required(CONF_COMPANY_CODE): str,
+                    vol.Optional(CONF_PLATFORM, default=DEFAULT_APP_PLATFORM): str,
+                    vol.Optional(CONF_APP_VERSION, default=DEFAULT_APP_VERSION): str,
+                    vol.Optional(CONF_OS_VERSION): str,
+                    vol.Optional(CONF_DEVICE_NAME): str,
+                    vol.Optional(CONF_DEVICE_ID): str,
+                    vol.Optional(CONF_USER_AGENT): str,
+                    vol.Optional(CONF_ADID): str,
+                    vol.Optional(CONF_TID): str,
+                    **_reading_fields(),
+                }
+            ),
+            errors=errors,
         )
+
+    # ------------------------------------------------------------------ #
+    # Private helpers                                                       #
+    # ------------------------------------------------------------------ #
+
+    def _auth_client(self, device_id: str) -> KoreaGasAppClient:
+        return KoreaGasAppClient(
+            async_get_clientsession(self.hass),
+            account_id="",
+            customer_no="",
+            adid=device_id,
+            app_version=IOS_APP_VERSION,
+            platform=IOS_PLATFORM,
+            os_version=IOS_OS_VERSION,
+            device_name=IOS_DEVICE_NAME,
+            device_id=device_id,
+            user_agent=IOS_USER_AGENT,
+        )
+
+    async def _async_create_sms_entry(
+        self,
+        *,
+        login: dict[str, Any],
+        member_no: str,
+        auth_token: str,
+        contract: dict[str, Any],
+    ) -> config_entries.ConfigFlowResult:
+        unique_id = str(
+            contract.get("useContractNum") or contract.get("customerNum") or member_no
+        )
+        await self.async_set_unique_id(unique_id)
+        self._abort_if_unique_id_configured()
+
+        data = {
+            CONF_ACCOUNT_ID: unique_id,
+            CONF_USE_CONTRACT_NUM: str(contract.get("useContractNum") or ""),
+            CONF_CUSTOMER_NO: str(contract.get("customerNum") or ""),
+            CONF_AUTH_TOKEN: auth_token,
+            CONF_MEMBER_NO: member_no,
+            CONF_COMPANY_CODE: str(contract.get("company") or "0"),
+            CONF_PLATFORM: IOS_PLATFORM,
+            CONF_APP_VERSION: IOS_APP_VERSION,
+            CONF_OS_VERSION: IOS_OS_VERSION,
+            CONF_DEVICE_NAME: IOS_DEVICE_NAME,
+            CONF_DEVICE_ID: login[CONF_DEVICE_ID],
+            CONF_USER_AGENT: IOS_USER_AGENT,
+            CONF_ADID: login[CONF_ADID],
+            CONF_SUBMIT_DAY: login[CONF_SUBMIT_DAY],
+            CONF_SUBMIT_TIME: login[CONF_SUBMIT_TIME],
+            CONF_READING_ENTITY_ID: login[CONF_READING_ENTITY_ID],
+            CONF_MAX_READING_DELTA: login[CONF_MAX_READING_DELTA],
+            CONF_READING_ROUND: login.get(CONF_READING_ROUND, DEFAULT_READING_ROUND),
+        }
+        return self.async_create_entry(title=_contract_label(contract), data=data)
+
+    async def _async_validate_manual_session(
+        self, user_input: dict[str, Any]
+    ) -> tuple[dict[str, str], config_entries.ConfigFlowResult | None]:
+        errors: dict[str, str] = {}
+        unique_id = user_input.get(CONF_USE_CONTRACT_NUM) or user_input.get(CONF_CUSTOMER_NO)
         if unique_id is None:
             errors["base"] = "missing_contract"
             return errors, None
@@ -367,138 +393,25 @@ class KoreaGasAppConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors["base"] = "invalid_auth"
             return errors, None
 
-        return errors, self.async_create_entry(
-            title=unique_id or "Korea Gas App",
-            data=user_input,
-        )
-
-    def _auth_client(self, device_id: str) -> KoreaGasAppClient:
-        """Return a client configured like the captured iOS login flow."""
-        return KoreaGasAppClient(
-            async_get_clientsession(self.hass),
-            account_id="",
-            customer_no="",
-            adid=device_id,
-            app_version=IOS_APP_VERSION,
-            platform=IOS_PLATFORM,
-            os_version=IOS_OS_VERSION,
-            device_name=IOS_DEVICE_NAME,
-            device_id=device_id,
-            user_agent=IOS_USER_AGENT,
-        )
-
-    async def _async_create_sms_entry(
-        self,
-        *,
-        login: dict[str, Any],
-        member_no: str,
-        auth_token: str,
-        contract: dict[str, Any],
-    ) -> config_entries.ConfigFlowResult:
-        """Create an entry from a completed SMS login."""
-        unique_id = str(
-            contract.get("useContractNum") or contract.get("customerNum") or member_no
-        )
-        await self.async_set_unique_id(unique_id)
-        self._abort_if_unique_id_configured()
-
-        data = {
-            CONF_ACCOUNT_ID: unique_id,
-            CONF_USE_CONTRACT_NUM: str(contract.get("useContractNum") or ""),
-            CONF_CUSTOMER_NO: str(contract.get("customerNum") or ""),
-            CONF_AUTH_TOKEN: auth_token,
-            CONF_MEMBER_NO: member_no,
-            CONF_COMPANY_CODE: str(contract.get("company") or "0"),
-            CONF_PLATFORM: IOS_PLATFORM,
-            CONF_APP_VERSION: IOS_APP_VERSION,
-            CONF_OS_VERSION: IOS_OS_VERSION,
-            CONF_DEVICE_NAME: IOS_DEVICE_NAME,
-            CONF_DEVICE_ID: login[CONF_DEVICE_ID],
-            CONF_USER_AGENT: IOS_USER_AGENT,
-            CONF_ADID: login[CONF_ADID],
-            CONF_SUBMIT_DAY: login[CONF_SUBMIT_DAY],
-            CONF_SUBMIT_TIME: login[CONF_SUBMIT_TIME],
-            CONF_READING_ENTITY_ID: login[CONF_READING_ENTITY_ID],
-            CONF_MAX_READING_DELTA: login[CONF_MAX_READING_DELTA],
-        }
-        return self.async_create_entry(title=_contract_label(contract), data=data)
-
-
-def _birth_date(birthday: str, gender_code: str) -> str:
-    """Convert YYMMDD plus Korean gender code to YYYYMMDD."""
-    century = "20" if gender_code in {"3", "4"} else "19"
-    return f"{century}{birthday}"
-
-
-def _normalize_identity_no(value: str) -> str:
-    """Normalize a partial Korean resident number to YYMMDD-G."""
-    normalized = value.strip()
-    if len(normalized) >= 8 and normalized[6] == "-":
-        birthday = normalized[:6]
-        gender_code = normalized[7]
-    elif len(normalized) >= 7:
-        birthday = normalized[:6]
-        gender_code = normalized[6]
-    else:
-        raise vol.Invalid("invalid_identity_no")
-
-    if not birthday.isdigit() or gender_code not in VALID_GENDER_CODES:
-        raise vol.Invalid("invalid_identity_no")
-    return f"{birthday}-{gender_code}"
-
-
-def _birthday_from_identity(value: str) -> str:
-    """Return YYMMDD from a normalized partial resident number."""
-    return _normalize_identity_no(value)[:6]
-
-
-def _gender_code_from_identity(value: str) -> str:
-    """Return the gender code from a normalized partial resident number."""
-    return _normalize_identity_no(value)[7]
-
-
-def _member_gender(gender_code: str) -> str:
-    """Convert NICE gender code to the Gas App member gender value."""
-    return "F" if gender_code in {"2", "4"} else "M"
-
-
-def _contracts_from_init(init_payload: Any) -> list[dict[str, Any]]:
-    """Extract contract dictionaries from the app init payload."""
-    if not isinstance(init_payload, dict):
-        return []
-    contracts = init_payload.get("contracts")
-    if not isinstance(contracts, list):
-        return []
-    return [contract for contract in contracts if isinstance(contract, dict)]
-
-
-def _contract_key(contract: dict[str, Any]) -> str:
-    """Return a stable key for a contract selector."""
-    return str(contract.get("useContractNum") or contract.get("customerNum") or "")
-
-
-def _contract_label(contract: dict[str, Any]) -> str:
-    """Return a human-friendly contract title without exposing address details."""
-    alias = contract.get("alias")
-    label = contract.get("label")
-    use_contract_num = contract.get("useContractNum")
-    return str(alias or label or use_contract_num or "Korea Gas App")
+        return errors, self.async_create_entry(title=unique_id or "Korea Gas App", data=user_input)
 
 
 class KoreaGasAppOptionsFlow(config_entries.OptionsFlow):
     """Handle Korea Gas App options."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Initialize options flow."""
         self._config_entry = config_entry
 
     async def async_step_init(
-        self,
-        user_input: dict[str, Any] | None = None,
+        self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
-        """Manage options."""
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
+
+        entry = self._config_entry
+
+        def _opt(key: str, default: Any = None) -> Any:
+            return entry.options.get(key, entry.data.get(key, default))
 
         return self.async_show_form(
             step_id="init",
@@ -506,66 +419,73 @@ class KoreaGasAppOptionsFlow(config_entries.OptionsFlow):
                 {
                     vol.Optional(
                         CONF_POLL_INTERVAL,
-                        default=self._config_entry.options.get(
-                            CONF_POLL_INTERVAL,
-                            DEFAULT_POLL_INTERVAL,
-                        ),
+                        default=_opt(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL),
                     ): vol.All(vol.Coerce(int), vol.Range(min=5, max=1440)),
-                    vol.Optional(
-                        CONF_SUBMIT_DAY,
-                        default=self._config_entry.options.get(
-                            CONF_SUBMIT_DAY,
-                            self._config_entry.data.get(
-                                CONF_SUBMIT_DAY,
-                                DEFAULT_SUBMIT_DAY,
-                            ),
-                        ),
-                    ): selector.NumberSelector(
-                        selector.NumberSelectorConfig(
-                            min=1,
-                            max=31,
-                            mode=selector.NumberSelectorMode.BOX,
-                        )
-                    ),
-                    vol.Optional(
-                        CONF_SUBMIT_TIME,
-                        default=self._config_entry.options.get(
-                            CONF_SUBMIT_TIME,
-                            self._config_entry.data.get(
-                                CONF_SUBMIT_TIME,
-                                DEFAULT_SUBMIT_TIME,
-                            ),
-                        ),
-                    ): selector.TimeSelector(),
-                    vol.Optional(
-                        CONF_READING_ENTITY_ID,
-                        default=self._config_entry.options.get(
-                            CONF_READING_ENTITY_ID,
-                            self._config_entry.data.get(CONF_READING_ENTITY_ID),
-                        )
-                        or "",
-                    ): selector.EntitySelector(
-                        selector.EntitySelectorConfig(
-                            domain=["input_number", "number", "sensor"]
-                        )
-                    ),
-                    vol.Optional(
-                        CONF_MAX_READING_DELTA,
-                        default=self._config_entry.options.get(
-                            CONF_MAX_READING_DELTA,
-                            self._config_entry.data.get(
-                                CONF_MAX_READING_DELTA,
-                                DEFAULT_MAX_READING_DELTA,
-                            ),
-                        ),
-                    ): selector.NumberSelector(
-                        selector.NumberSelectorConfig(
-                            min=0,
-                            max=10000,
-                            mode=selector.NumberSelectorMode.BOX,
-                        )
+                    **_reading_fields(
+                        {
+                            CONF_SUBMIT_DAY: _opt(CONF_SUBMIT_DAY, DEFAULT_SUBMIT_DAY),
+                            CONF_SUBMIT_TIME: _opt(CONF_SUBMIT_TIME, DEFAULT_SUBMIT_TIME),
+                            CONF_READING_ENTITY_ID: _opt(CONF_READING_ENTITY_ID, ""),
+                            CONF_MAX_READING_DELTA: _opt(CONF_MAX_READING_DELTA, DEFAULT_MAX_READING_DELTA),
+                            CONF_READING_ROUND: _opt(CONF_READING_ROUND, DEFAULT_READING_ROUND),
+                        }
                     ),
                 }
             ),
         )
 
+
+# --------------------------------------------------------------------------- #
+# Pure helpers                                                                  #
+# --------------------------------------------------------------------------- #
+
+def _birth_date(birthday: str, gender_code: str) -> str:
+    century = "20" if gender_code in {"3", "4"} else "19"
+    return f"{century}{birthday}"
+
+
+def _normalize_identity_no(value: str) -> str:
+    normalized = value.strip()
+    if len(normalized) >= 8 and normalized[6] == "-":
+        birthday, gender_code = normalized[:6], normalized[7]
+    elif len(normalized) >= 7:
+        birthday, gender_code = normalized[:6], normalized[6]
+    else:
+        raise vol.Invalid("invalid_identity_no")
+    if not birthday.isdigit() or gender_code not in VALID_GENDER_CODES:
+        raise vol.Invalid("invalid_identity_no")
+    return f"{birthday}-{gender_code}"
+
+
+def _birthday_from_identity(value: str) -> str:
+    return _normalize_identity_no(value)[:6]
+
+
+def _gender_code_from_identity(value: str) -> str:
+    return _normalize_identity_no(value)[7]
+
+
+def _member_gender(gender_code: str) -> str:
+    return "F" if gender_code in {"2", "4"} else "M"
+
+
+def _contracts_from_init(init_payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(init_payload, dict):
+        return []
+    contracts = init_payload.get("contracts")
+    if not isinstance(contracts, list):
+        return []
+    return [c for c in contracts if isinstance(c, dict)]
+
+
+def _contract_key(contract: dict[str, Any]) -> str:
+    return str(contract.get("useContractNum") or contract.get("customerNum") or "")
+
+
+def _contract_label(contract: dict[str, Any]) -> str:
+    return str(
+        contract.get("alias")
+        or contract.get("label")
+        or contract.get("useContractNum")
+        or "Korea Gas App"
+    )
