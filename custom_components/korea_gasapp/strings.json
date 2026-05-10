@@ -1,0 +1,95 @@
+{
+  "title": "Korea Gas App",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Korea Gas App"
+      },
+      "sms_login": {
+        "title": "Korea Gas App SMS verification",
+        "description": "Enter the same identity fields used by the Gas App. For resident number, enter only the first 6 digits and the first digit after the dash, for example 950301-1. These values are used only during setup and are not stored in the config entry.",
+        "data": {
+          "name": "Name",
+          "mobile_no": "Mobile number",
+          "identity_no": "Resident number front part (ex: 950301-1)",
+          "mobile_co": "Mobile carrier",
+          "submit_day": "Meter reading day",
+          "submit_time": "Meter reading time",
+          "reading_entity_id": "Meter reading entity"
+        }
+      },
+      "sms_confirm": {
+        "title": "Enter SMS verification code",
+        "data": {
+          "otp": "Verification code"
+        }
+      },
+      "contract": {
+        "title": "Choose gas contract",
+        "data": {
+          "use_contract_num": "Gas contract"
+        }
+      },
+      "manual_session": {
+        "title": "Korea Gas App session values",
+        "description": "Enter the account identifiers discovered from the mobile app session.",
+        "data": {
+          "account_id": "Account ID",
+          "use_contract_num": "Use contract number",
+          "customer_no": "Customer number",
+          "auth_token": "X-TOKEN",
+          "member_no": "X-MEMBER",
+          "company_code": "X-COMPANY",
+          "platform": "X-PLATFORM",
+          "app_version": "X-VERSION",
+          "os_version": "X-OS-VERSION",
+          "device_name": "X-DEVICE-NAME",
+          "device_id": "X-DEVID",
+          "user_agent": "User-Agent",
+          "adid": "X-ADID",
+          "tid": "X-TID",
+          "submit_day": "Meter reading day",
+          "submit_time": "Meter reading time",
+          "reading_entity_id": "Meter reading entity"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Required Gas App session values are missing",
+      "invalid_identity_no": "Enter the resident number front part like 760808-1******",
+      "invalid_otp": "The verification code was rejected",
+      "login_failed": "The Gas App login request failed",
+      "missing_contract": "Enter a use contract number or customer number",
+      "no_contract": "No gas contract was returned for this account",
+      "sms_request_failed": "Could not request an SMS verification code"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Korea Gas App options",
+        "data": {
+          "poll_interval": "Polling interval in minutes",
+          "submit_day": "Meter reading day",
+          "submit_time": "Meter reading time",
+          "reading_entity_id": "Meter reading entity"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "latest_bill_charge": {
+        "name": "Latest bill gas charge"
+      },
+      "last_meter_reading": {
+        "name": "Last meter reading"
+      }
+    },
+    "binary_sensor": {
+      "self_input_available": {
+        "name": "Self meter reading available"
+      }
+    }
+  }
+}

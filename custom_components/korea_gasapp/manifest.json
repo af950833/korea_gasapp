@@ -1,0 +1,12 @@
+{
+  "domain": "korea_gasapp",
+  "name": "Korea Gas App",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://github.com/af950833/korea_gasapp",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "requirements": [],
+  "single_config_entry": false,
+  "version": "1.0.0"
+}

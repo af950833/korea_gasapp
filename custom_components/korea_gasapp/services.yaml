@@ -1,0 +1,17 @@
+submit_meter_reading:
+  name: Submit meter reading
+  description: Submit a self meter reading to Korea Gas App.
+  fields:
+    account:
+      name: Account
+      description: Account title, contract number, customer number, or visible device name. Required only when multiple Korea Gas App accounts are loaded.
+      selector:
+        text:
+    reading:
+      name: Meter reading
+      description: Current gas meter reading value to submit.
+      required: true
+      selector:
+        number:
+          min: 0
+          mode: box
