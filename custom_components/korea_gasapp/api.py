@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urljoin
 
@@ -48,17 +48,92 @@ class KoreaGasAppEndpointUnknownError(KoreaGasAppApiError):
 
 
 @dataclass(slots=True)
+class BillDetail:
+    """Parsed key-value from the bill detail areas."""
+
+    basic_charge: int | None = None          # 기본요금
+    usage_charge: int | None = None          # 사용요금
+    vat: int | None = None                   # 부가세
+    discount: int | None = None              # 할인금액
+    truncation: int | None = None            # 절사금액
+    unpaid: int | None = None                # 미납 소계
+    usage_period: str | None = None          # 사용 기간
+    due_date: str | None = None              # 납부 마감일
+    this_month_indicator: int | None = None  # 당월지침 m³
+    last_month_indicator: int | None = None  # 전월지침 m³
+    monthly_usage: int | None = None         # 당월사용량 m³
+    correction_factor: float | None = None   # 보정 계수
+    correction_usage: float | None = None    # 보정량 m³
+    avg_calorific: float | None = None       # 평균열량 MJ/m³
+    used_calorific: float | None = None      # 사용열량 MJ
+    meter_id: str | None = None              # 계량기 번호
+    reading_day: str | None = None           # 검침일
+    reading_method: str | None = None        # 검침방법
+    prev_month_usage: str | None = None      # 전월 사용량
+    prev_year_usage: str | None = None       # 전년 동월 사용량
+    discount_type: str | None = None         # 할인종류
+
+
+@dataclass(slots=True)
+class CurrentBillSnapshot:
+    """Current month bill data from relay/bills/month."""
+
+    charge_krw: int | None = None
+    title: str | None = None
+    status: str | None = None
+    payable: bool | None = None
+    detail: BillDetail = field(default_factory=BillDetail)
+
+
+@dataclass(slots=True)
+class AnnualBillEntry:
+    """One row from the annual bill summary."""
+
+    request_ym: str
+    usage_qty: int | None = None
+    charge_amt_qty: int | None = None
+
+
+@dataclass(slots=True)
+class IndicationHistoryEntry:
+    """One row from the indication history."""
+
+    reading_date: str
+    request_ym: str
+    indicator: int | None = None
+    method: str | None = None
+
+
+@dataclass(slots=True)
+class IndicationInfo:
+    """Current indication status from relay/indications."""
+
+    last_month_indicator: int | None = None
+    self_input_available: bool | None = None
+    period_start: str | None = None   # e.g. "2026-06-22"
+    period_end: str | None = None
+    period_type: str | None = None
+    request_ym: str | None = None
+
+
+@dataclass(slots=True)
 class GasUsageSnapshot:
-    """Latest gas usage and billing values."""
+    """All data polled in one coordinator refresh."""
 
     customer_no: str
     use_contract_num: str
-    latest_bill_month: str | None = None
-    latest_bill_usage_m3: float | None = None
-    latest_bill_charge_krw: int | None = None
-    latest_indication_date: str | None = None
-    last_meter_reading_m3: float | None = None
+    # Current bill
+    current_bill: CurrentBillSnapshot = field(default_factory=CurrentBillSnapshot)
+    # Annual history
+    annual_bills: list[AnnualBillEntry] = field(default_factory=list)
+    # Indication info
+    indication: IndicationInfo = field(default_factory=IndicationInfo)
+    # Indication history
+    indication_history: list[IndicationHistoryEntry] = field(default_factory=list)
+    # Self-reading still available (kept for binary sensor)
     self_input_available: bool | None = None
+    # Last meter reading m³ (for validation)
+    last_meter_reading_m3: float | None = None
 
 
 @dataclass(slots=True)
@@ -99,7 +174,7 @@ class MemberLoginResult:
 
 
 class KoreaGasAppClient:
-    """Small async client boundary for the eventual Gas App API."""
+    """Small async client boundary for the Gas App API."""
 
     def __init__(
         self,
@@ -165,11 +240,7 @@ class KoreaGasAppClient:
         )
 
     async def validate(self) -> None:
-        """Validate credentials.
-
-        This becomes a real lightweight request once the mobile/webview
-        endpoint and auth contract are known.
-        """
+        """Validate credentials."""
         if not self._customer_no and not self._use_contract_num:
             raise KoreaGasAppAuthError(
                 "Customer number or use contract number is required"
@@ -178,6 +249,210 @@ class KoreaGasAppClient:
             raise KoreaGasAppAuthError(
                 "X-TOKEN, X-MEMBER, and X-COMPANY values from the app session are required"
             )
+
+    # ------------------------------------------------------------------ #
+    # Public data methods                                                   #
+    # ------------------------------------------------------------------ #
+
+    async def async_get_usage(self) -> GasUsageSnapshot:
+        """Fetch the full usage snapshot."""
+        await self.validate()
+
+        current_bill = await self._async_get_current_bill()
+        annual_bills = await self._async_get_annual_bills()
+        indication = await self._async_get_indication()
+        history = await self._async_get_indication_history()
+
+        last_reading: float | None = None
+        if indication.last_month_indicator is not None:
+            last_reading = float(indication.last_month_indicator)
+
+        return GasUsageSnapshot(
+            customer_no=self._customer_no,
+            use_contract_num=self._use_contract_num or "",
+            current_bill=current_bill,
+            annual_bills=annual_bills,
+            indication=indication,
+            indication_history=history,
+            self_input_available=indication.self_input_available,
+            last_meter_reading_m3=last_reading,
+        )
+
+    async def _async_get_current_bill(self) -> CurrentBillSnapshot:
+        """Fetch current month bill detail from relay/bills/month."""
+        try:
+            data = await self._get(
+                "relay/bills/month",
+                self._contract_params(history="Y", deadlineFlag="", requestYm=""),
+            )
+        except KoreaGasAppApiError:
+            return CurrentBillSnapshot()
+
+        if not isinstance(data, dict):
+            return CurrentBillSnapshot()
+
+        amount_str = data.get("amount", "")
+        charge = self._parse_krw(amount_str)
+
+        detail = BillDetail()
+        for area in (
+            data.get("areaEtc") or [],
+            data.get("areaPayment") or [],
+            data.get("areaUnpayment") or [],
+            data.get("areaUsage") or [],
+        ):
+            for item in area:
+                if not isinstance(item, dict):
+                    continue
+                k = item.get("key", "")
+                v = item.get("value", "")
+                if k == "기본요금":
+                    detail.basic_charge = self._parse_krw(v)
+                elif k == "사용요금":
+                    detail.usage_charge = self._parse_krw(v)
+                elif k == "부가세":
+                    detail.vat = self._parse_krw(v)
+                elif k == "할인금액":
+                    detail.discount = self._parse_krw(v)
+                elif k == "절사금액":
+                    detail.truncation = self._parse_krw(v)
+                elif k == "미납 소계":
+                    detail.unpaid = self._parse_krw(v)
+                elif k == "사용 기간":
+                    detail.usage_period = v
+                elif k == "납부 마감일":
+                    detail.due_date = v
+                elif k == "당월지침":
+                    detail.this_month_indicator = self._parse_m3_int(v)
+                elif k == "전월지침":
+                    detail.last_month_indicator = self._parse_m3_int(v)
+                elif k == "당월사용량":
+                    detail.monthly_usage = self._parse_m3_int(v)
+                elif k == "보정 계수":
+                    detail.correction_factor = self._try_float(v)
+                elif k == "보정량":
+                    detail.correction_usage = self._parse_m3_float(v)
+                elif k == "평균열량":
+                    detail.avg_calorific = self._try_float(v.replace("MJ/m³", "").strip())
+                elif k == "사용열량":
+                    detail.used_calorific = self._try_float(v.replace("MJ", "").strip())
+                elif k == "계량기 번호":
+                    detail.meter_id = v
+                elif k == "검침일":
+                    detail.reading_day = v
+                elif k == "검침방법":
+                    detail.reading_method = v
+                elif k == "전월 사용량":
+                    detail.prev_month_usage = v
+                elif k == "전년 동월 사용량":
+                    detail.prev_year_usage = v
+                elif k == "할인종류":
+                    detail.discount_type = v
+
+        return CurrentBillSnapshot(
+            charge_krw=charge,
+            title=data.get("title"),
+            status=data.get("status"),
+            payable=data.get("payable") == "Y",
+            detail=detail,
+        )
+
+    async def _async_get_annual_bills(self) -> list[AnnualBillEntry]:
+        """Fetch annual bill history from relay/bills/summary?f=annual."""
+        try:
+            data = await self._get(
+                "relay/bills/summary",
+                self._contract_params(onlyUnpay="N", f="annual"),
+            )
+        except KoreaGasAppApiError:
+            return []
+
+        rows: list[Any] = []
+        if isinstance(data, list):
+            rows = data
+        elif isinstance(data, dict):
+            rows = data.get("data") or data.get("list") or []
+
+        result: list[AnnualBillEntry] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            ym = row.get("requestYm")
+            if not ym:
+                continue
+            result.append(
+                AnnualBillEntry(
+                    request_ym=str(ym),
+                    usage_qty=self._coerce_int(row.get("usageQty")),
+                    charge_amt_qty=self._coerce_int(row.get("chargeAmtQty")),
+                )
+            )
+
+        # Sort newest-first
+        result.sort(key=lambda e: e.request_ym, reverse=True)
+        return result
+
+    async def _async_get_indication(self) -> IndicationInfo:
+        """Fetch current indication status from relay/indications."""
+        try:
+            data = await self._get(
+                "relay/indications",
+                self._contract_params(),
+            )
+        except KoreaGasAppApiError:
+            return IndicationInfo()
+
+        if not isinstance(data, dict):
+            return IndicationInfo()
+
+        available_raw = data.get("selfInputAvailable")
+        available = None
+        if available_raw is not None:
+            available = str(available_raw).upper() in {"TRUE", "Y", "1"}
+
+        return IndicationInfo(
+            last_month_indicator=self._coerce_int(data.get("lastMonthIndicatorQty")),
+            self_input_available=available,
+            period_start=data.get("periodStart"),
+            period_end=data.get("periodEnd"),
+            period_type=data.get("periodType"),
+            request_ym=data.get("requestYm"),
+        )
+
+    async def _async_get_indication_history(
+        self, limit: int = 6
+    ) -> list[IndicationHistoryEntry]:
+        """Fetch self-reading history from relay/indications/history."""
+        try:
+            data = await self._get(
+                "relay/indications/history",
+                self._contract_params(limit=limit),
+            )
+        except KoreaGasAppApiError:
+            return []
+
+        rows: list[Any] = data if isinstance(data, list) else []
+        result: list[IndicationHistoryEntry] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            date = row.get("gmtrJobYmd")
+            ym = row.get("requestYm")
+            if not date:
+                continue
+            result.append(
+                IndicationHistoryEntry(
+                    reading_date=str(date),
+                    request_ym=str(ym) if ym else "",
+                    indicator=self._coerce_int(row.get("indiCompensThisMonthVc")),
+                    method=row.get("gmtrMethod"),
+                )
+            )
+        return result
+
+    # ------------------------------------------------------------------ #
+    # Auth / session methods                                               #
+    # ------------------------------------------------------------------ #
 
     async def async_request_sms(
         self,
@@ -302,80 +577,6 @@ class KoreaGasAppClient:
         )
         return await self._get("init", {}, headers=headers)
 
-    async def async_get_usage(self) -> GasUsageSnapshot:
-        """Fetch the latest usage snapshot."""
-        await self.validate()
-
-        home = await self._get(
-            "home",
-            self._contract_params(amiYn="N"),
-        )
-        meter = await self._try_get("meters", self._contract_params())
-        unpaid = await self._try_get_bill_summary("unpay", only_unpay="Y")
-        paid = await self._try_get_bill_summary("pay", only_unpay="N")
-
-        home_bill = self._home_bill(home)
-        indication = self._home_indication(home)
-        bill_history = self._home_bill_history(home)
-        current_bill = home_bill or self._first_item(unpaid) or self._first_item(paid)
-
-        latest_bill_usage = self._first_float(
-            home_bill,
-            bill_history,
-            meter,
-            current_bill,
-            keys=(
-                "useQty",
-                "usageQty",
-                "meterUsageQty",
-                "gasUseQty",
-                "replaceUsageQty",
-                "currentUsageQty",
-            ),
-        )
-        latest_bill_charge = self._first_int(
-            current_bill,
-            keys=(
-                "chargeAmtQty",
-                "title2",
-                "chargeAmt",
-                "billingCharge",
-                "billAmt",
-                "requestAmt",
-                "payAmt",
-            ),
-        )
-
-        return GasUsageSnapshot(
-            customer_no=self._customer_no,
-            use_contract_num=self._use_contract_num or "",
-            latest_bill_month=self._first_str(
-                current_bill,
-                bill_history,
-                keys=("requestYm", "requestMonth", "billYm"),
-            ),
-            latest_bill_usage_m3=latest_bill_usage,
-            latest_bill_charge_krw=latest_bill_charge,
-            latest_indication_date=self._first_str(
-                indication,
-                keys=("gmtrJobYmd", "jobYmd", "readingDate"),
-            ),
-            last_meter_reading_m3=self._first_float(
-                indication,
-                meter,
-                keys=(
-                    "indiCompensThisMonthVc",
-                    "lastMonthIndicatorQty",
-                    "meterValue",
-                    "meterReading",
-                    "replaceNumber",
-                    "currentMeterValue",
-                    "lastMeterReading",
-                ),
-            ),
-            self_input_available=self._self_input_available(home),
-        )
-
     async def async_submit_meter_reading(
         self,
         reading: int,
@@ -412,106 +613,16 @@ class KoreaGasAppClient:
             )
         return result
 
-    async def _try_get_bill_summary(
-        self,
-        mode: str,
-        *,
-        only_unpay: str,
-    ) -> Any:
-        """Fetch bill summary rows when the endpoint is available."""
-        try:
-            return await self._get_bill_summary(mode, only_unpay=only_unpay)
-        except KoreaGasAppApiError:
-            return None
-
-    async def _get_bill_summary(
-        self,
-        mode: str,
-        *,
-        only_unpay: str,
-    ) -> Any:
-        """Fetch bill summary rows."""
-        return await self._get(
-            "bills/summary",
-            self._contract_params(
-                onlyUnpay=only_unpay,
-                f=mode,
-            ),
-        )
+    # ------------------------------------------------------------------ #
+    # HTTP helpers                                                          #
+    # ------------------------------------------------------------------ #
 
     def _contract_params(self, **extra: Any) -> dict[str, Any]:
-        """Return request params, omitting unknown contract values."""
         params: dict[str, Any] = {"customerNum": self._customer_no or ""}
         if self._use_contract_num:
             params["useContractNum"] = self._use_contract_num
         params.update(extra)
         return params
-
-    async def _try_get(self, path: str, params: dict[str, Any]) -> Any:
-        """Run a best-effort GET request."""
-        try:
-            return await self._get(path, params)
-        except KoreaGasAppApiError:
-            return None
-
-    @staticmethod
-    def _home_bill(value: Any) -> dict[str, Any] | None:
-        """Return the home bill card from a home response."""
-        if not isinstance(value, dict):
-            return None
-        cards = value.get("cards")
-        if not isinstance(cards, dict):
-            return None
-        bill = cards.get("bill")
-        return bill if isinstance(bill, dict) else None
-
-    @staticmethod
-    def _home_indication(value: Any) -> dict[str, Any] | None:
-        """Return the home indication card from a home response."""
-        if not isinstance(value, dict):
-            return None
-        cards = value.get("cards")
-        if not isinstance(cards, dict):
-            return None
-        indication = cards.get("indication")
-        if isinstance(indication, dict):
-            history = indication.get("history")
-            if isinstance(history, list):
-                first = next((item for item in history if isinstance(item, dict)), None)
-                if first is not None:
-                    return first
-            return indication
-        return None
-
-    @staticmethod
-    def _home_bill_history(value: Any) -> dict[str, Any] | None:
-        """Return the latest item from the home bill history."""
-        bill = KoreaGasAppClient._home_bill(value)
-        if not isinstance(bill, dict):
-            return None
-        history = bill.get("history")
-        if not isinstance(history, list):
-            return None
-        return next(
-            (item for item in reversed(history) if isinstance(item, dict)),
-            None,
-        )
-
-    @staticmethod
-    def _self_input_available(value: Any) -> bool | None:
-        """Return whether self meter reading is currently available."""
-        if not isinstance(value, dict):
-            return None
-        cards = value.get("cards")
-        if not isinstance(cards, dict):
-            return None
-        indication = cards.get("indication")
-        if not isinstance(indication, dict):
-            return None
-        available = indication.get("selfInputAvailable")
-        if available is None:
-            return None
-        return str(available).upper() == "Y"
 
     async def _get(
         self,
@@ -520,10 +631,8 @@ class KoreaGasAppClient:
         *,
         headers: dict[str, str] | None = None,
     ) -> Any:
-        """Run a GET request against the Gas App web API."""
         if self._session is None:
             raise KoreaGasAppEndpointUnknownError("HTTP session is not available")
-
         async with self._session.get(
             urljoin(self._base_url, path),
             params=params,
@@ -545,10 +654,8 @@ class KoreaGasAppClient:
         *,
         headers: dict[str, str] | None = None,
     ) -> Any:
-        """Run a JSON POST request against the Gas App web API."""
         if self._session is None:
             raise KoreaGasAppEndpointUnknownError("HTTP session is not available")
-
         async with self._session.post(
             urljoin(self._base_url, path),
             json=payload,
@@ -565,7 +672,6 @@ class KoreaGasAppClient:
 
     @property
     def _headers(self) -> dict[str, str]:
-        """Return headers used by the Gas App web frontend."""
         return self._headers_with(
             auth_token=self._auth_token or "",
             member_no=self._member_no or "",
@@ -574,7 +680,6 @@ class KoreaGasAppClient:
 
     @property
     def _anonymous_headers(self) -> dict[str, str]:
-        """Return headers used before a Gas App member session exists."""
         return self._headers_with(auth_token="", member_no="", company_code="null")
 
     def _headers_with(
@@ -584,7 +689,6 @@ class KoreaGasAppClient:
         member_no: str,
         company_code: str,
     ) -> dict[str, str]:
-        """Return Gas App headers with explicit auth fields."""
         return {
             "Accept": "*/*",
             "User-Agent": self._user_agent,
@@ -601,81 +705,48 @@ class KoreaGasAppClient:
             "X-DEVID": self._device_id or "",
         }
 
+    # ------------------------------------------------------------------ #
+    # Value parsing helpers                                                 #
+    # ------------------------------------------------------------------ #
+
     @staticmethod
-    def _first_item(value: Any) -> dict[str, Any] | None:
-        """Return the first object from an API response."""
-        if isinstance(value, list):
-            return next((item for item in value if isinstance(item, dict)), None)
-        if isinstance(value, dict):
-            data = value.get("data")
-            if isinstance(data, list):
-                return next((item for item in data if isinstance(item, dict)), None)
-            return value
-        return None
-
-    @classmethod
-    def _first_int(
-        cls,
-        *values: Any,
-        keys: tuple[str, ...],
-    ) -> int | None:
-        """Find the first integer-ish value by key."""
-        value = cls._first_value(*values, keys=keys)
-        if value is None:
+    def _parse_krw(value: str) -> int | None:
+        """Parse a Korean won string like '17,480 원' or '-840 원'."""
+        if not value:
             return None
-        if isinstance(value, str):
-            value = value.replace(",", "").replace("원", "").strip()
+        cleaned = value.replace(",", "").replace("원", "").strip()
         try:
-            return int(float(value))
-        except (TypeError, ValueError):
-            return None
-
-    @classmethod
-    def _first_float(
-        cls,
-        *values: Any,
-        keys: tuple[str, ...],
-    ) -> float | None:
-        """Find the first float-ish value by key."""
-        value = cls._first_value(*values, keys=keys)
-        if value is None:
-            return None
-        if isinstance(value, str):
-            value = value.replace(",", "").replace("㎥", "").replace("m3", "").strip()
-        try:
-            return float(value)
-        except (TypeError, ValueError):
+            return int(float(cleaned))
+        except (ValueError, TypeError):
             return None
 
     @staticmethod
-    def _first_value(
-        *values: Any,
-        keys: tuple[str, ...],
-    ) -> Any:
-        """Find a value in nested dictionaries using likely response keys."""
-        for value in values:
-            if not isinstance(value, dict):
-                continue
-            for key in keys:
-                if key in value and value[key] not in (None, ""):
-                    return value[key]
-        return None
-
-    @classmethod
-    def _first_str(
-        cls,
-        *values: Any,
-        keys: tuple[str, ...],
-    ) -> str | None:
-        """Find the first non-empty string-ish value by key."""
-        value = cls._first_value(*values, keys=keys)
-        if value in (None, ""):
+    def _parse_m3_int(value: str) -> int | None:
+        """Parse 'm³' quantity string to int."""
+        cleaned = value.replace("m³", "").replace(",", "").strip()
+        try:
+            return int(float(cleaned))
+        except (ValueError, TypeError):
             return None
-        return str(value)
+
+    @staticmethod
+    def _parse_m3_float(value: str) -> float | None:
+        """Parse 'm³' quantity string to float."""
+        cleaned = value.replace("m³", "").replace(",", "").strip()
+        try:
+            return float(cleaned)
+        except (ValueError, TypeError):
+            return None
+
+    @staticmethod
+    def _try_float(value: Any) -> float | None:
+        try:
+            return float(str(value).replace(",", "").strip())
+        except (ValueError, TypeError):
+            return None
 
     @staticmethod
     def _coerce_int(value: Any) -> int | None:
-        """Coerce API integer-ish values."""
         if value is None:
             return None
         if isinstance(value, str):
