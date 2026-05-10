@@ -11,10 +11,7 @@
           "mobile_no": "휴대폰 번호",
           "identity_no": "주민등록번호 앞부분 (예: 950301-1)",
           "mobile_co": "통신사",
-          "submit_day": "자가검침일 (예비값)",
-          "submit_time": "자가검침 시간",
           "reading_entity_id": "가스미터 현재값 엔티티",
-          "max_reading_delta": "검침 변화 최대값",
           "reading_round": "검침값 반올림 방법"
         }
       },
@@ -44,10 +41,7 @@
           "user_agent": "User-Agent",
           "adid": "X-ADID",
           "tid": "X-TID",
-          "submit_day": "자가검침일 (예비값)",
-          "submit_time": "자가검침 시간",
           "reading_entity_id": "가스미터 현재값 엔티티",
-          "max_reading_delta": "검침 변화 최대값",
           "reading_round": "검침값 반올림 방법"
         }
       }
@@ -67,11 +61,7 @@
       "init": {
         "title": "Korea Gas App 옵션",
         "data": {
-          "poll_interval": "조회 주기(분)",
-          "submit_day": "자가검침일 (예비값)",
-          "submit_time": "자가검침 시간",
           "reading_entity_id": "가스미터 현재값 엔티티",
-          "max_reading_delta": "검침 변화 최대값",
           "reading_round": "검침값 반올림 방법"
         }
       }
