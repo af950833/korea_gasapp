@@ -82,9 +82,10 @@ class KoreaGasAppSensor(
         contract_num = coordinator.data.use_contract_num if coordinator.data else "unknown"
         customer_no = coordinator.data.customer_no if coordinator.data else "unknown"
         account_id = contract_num or customer_no or "unknown"
-        self._attr_unique_id = f"{account_id}_{description.key}"
+        self._attr_unique_id = f"{description.key}_{account_id}"
+        self.entity_id = f"sensor.{description.key}_{account_id}"
+        self._attr_has_entity_name = False
         self._attr_name = description.name
-        self._attr_suggested_object_id = description.key
         self._attr_device_info = {
             "identifiers": {("korea_gasapp", account_id)},
             "name": f"Gas account {account_id}",

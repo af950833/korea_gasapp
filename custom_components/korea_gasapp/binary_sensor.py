@@ -25,8 +25,8 @@ class KoreaGasAppSelfInputAvailableBinarySensor(
     """Representation of the self meter reading availability sensor."""
 
     _attr_translation_key = "self_input_available"
+    _attr_has_entity_name = False
     _attr_name = "Self meter reading available"
-    _attr_suggested_object_id = "self_meter_reading_available"
 
     def __init__(self, coordinator: KoreaGasAppDataUpdateCoordinator) -> None:
         """Initialize the binary sensor."""
@@ -34,7 +34,8 @@ class KoreaGasAppSelfInputAvailableBinarySensor(
         contract_num = coordinator.data.use_contract_num if coordinator.data else "unknown"
         customer_no = coordinator.data.customer_no if coordinator.data else "unknown"
         account_id = contract_num or customer_no or "unknown"
-        self._attr_unique_id = f"{account_id}_self_input_available"
+        self._attr_unique_id = f"self_input_available_{account_id}"
+        self.entity_id = f"binary_sensor.self_meter_reading_available_{account_id}"
         self._attr_device_info = {
             "identifiers": {("korea_gasapp", account_id)},
             "name": f"Gas account {account_id}",
