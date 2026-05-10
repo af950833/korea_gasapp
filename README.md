@@ -1,6 +1,6 @@
 # Korea Gas App for Home Assistant
 
-가스앱의 사용량/청구/자가검침 정보를 Home Assistant에서 사용할 수 있게 하는 커스텀 통합입니다.
+Korea Gas App의 사용량/청구/자가검침 정보를 Home Assistant에서 사용할 수 있게 하는 커스텀 통합입니다.
 
 이 통합은 가스앱의 모바일 API를 사용해 계정 인증, 계약 조회, 센서 생성, 자가검침 제출을 처리합니다.
 
@@ -15,6 +15,24 @@
 - 사진 없이 숫자 검침값만 제출
 
 ## 설치
+
+### HACS로 설치
+
+이 저장소는 HACS 커스텀 저장소로 추가해서 설치할 수 있습니다.
+
+1. Home Assistant에서 **HACS > Integrations**로 이동합니다.
+2. 우측 상단 메뉴에서 **Custom repositories**를 선택합니다.
+3. 저장소 주소를 입력합니다.
+
+   ```text
+   https://github.com/af950833/korea_gasapp
+   ```
+
+4. Category는 **Integration**으로 선택합니다.
+5. 저장소를 추가한 뒤 **Korea Gas App**을 검색해 설치합니다.
+6. Home Assistant를 재시작합니다.
+
+### 수동 설치
 
 `custom_components/korea_gasapp` 폴더를 Home Assistant 설정 경로의 `custom_components` 아래에 복사합니다.
 
