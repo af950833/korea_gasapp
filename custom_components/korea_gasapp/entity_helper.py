@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from .coordinator import KoreaGasAppDataUpdateCoordinator
+from .const import DOMAIN
+
+if TYPE_CHECKING:
+    # Import only for type checking to avoid any runtime circular dependency.
+    from .coordinator import KoreaGasAppDataUpdateCoordinator
 
 
 def get_account_id(coordinator: KoreaGasAppDataUpdateCoordinator) -> str:
@@ -34,7 +38,3 @@ def build_device_info(account_id: str) -> dict[str, Any]:
         "manufacturer": "Korea Gas App",
         "model": "가스앱 계정",
     }
-
-
-# Imported here to avoid a circular reference via entity_helper → const
-from .const import DOMAIN  # noqa: E402
