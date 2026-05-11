@@ -7,11 +7,11 @@ from datetime import datetime
 from typing import Any
 
 from homeassistant.components.binary_sensor import BinarySensorEntity
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import KoreaGasAppConfigEntry
 from .coordinator import KoreaGasAppDataUpdateCoordinator
 from .entity_helper import build_device_info, get_account_id
 
@@ -35,7 +35,7 @@ _RESTORE_ATTRS = frozenset({
 
 async def async_setup_entry(
     hass,
-    entry: KoreaGasAppConfigEntry,
+    entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Korea Gas App binary sensors.
@@ -44,7 +44,7 @@ async def async_setup_entry(
     the self-reading service.  A coordinator listener watches for the account
     signing up later and adds the entity automatically on the next refresh.
     """
-    coordinator = entry.runtime_data
+    coordinator: KoreaGasAppDataUpdateCoordinator = entry.runtime_data
     added_uids: set[str] = set()
 
     def _add_submission_sensor_if_needed() -> None:
