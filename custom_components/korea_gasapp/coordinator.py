@@ -8,10 +8,13 @@ from typing import TYPE_CHECKING
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import GasUsageSnapshot, KoreaGasAppApiError, KoreaGasAppClient
 from .const import DOMAIN
 
+# api is NOT imported at module level — see __init__.py for the explanation.
+# GasUsageSnapshot and KoreaGasAppClient are referenced only in type annotations
+# (safe because of `from __future__ import annotations`) or inside methods.
 if TYPE_CHECKING:
+    from .api import GasUsageSnapshot, KoreaGasAppClient
     from .binary_sensor import KoreaGasAppSubmissionResultBinarySensor
 
 _LOGGER = logging.getLogger(__name__)
@@ -39,6 +42,8 @@ class KoreaGasAppDataUpdateCoordinator(DataUpdateCoordinator[GasUsageSnapshot]):
         self.client = client
 
     async def _async_update_data(self) -> GasUsageSnapshot:
+        from .api import KoreaGasAppApiError  # lazy import — api must be fully loaded by now
+
         try:
             return await self.client.async_get_usage()
         except KoreaGasAppApiError as err:
