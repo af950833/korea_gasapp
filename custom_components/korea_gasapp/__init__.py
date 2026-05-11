@@ -16,7 +16,12 @@ from homeassistant.exceptions import HomeAssistantError
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.event import async_track_time_change
 
-from .api import KoreaGasAppApiError, KoreaGasAppClient
+# .api is intentionally NOT imported at module level.
+# HA loads config_flow while __init__.py is still initialising, and __init__
+# itself triggers api loading.  A top-level "from .api import ..." in either
+# file causes api to be seen as partially-initialised by the other.
+# All api symbols are therefore imported lazily inside the functions that need them.
+
 from .const import (
     CONF_ACCOUNT_ID,
     CONF_CUSTOMER_NO,
@@ -52,6 +57,8 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     """Register the submit_meter_reading service."""
 
     async def _handle_submit(call: ServiceCall) -> None:
+        from .api import KoreaGasAppApiError  # lazy import
+
         coordinator = _resolve_coordinator(hass, call.data.get(_ATTR_ACCOUNT))
         reading: int = call.data[_ATTR_READING]
 
@@ -124,6 +131,8 @@ async def async_setup_entry(
     entry: ConfigEntry[KoreaGasAppDataUpdateCoordinator],
 ) -> bool:
     """Set up a Korea Gas App config entry."""
+    from .api import KoreaGasAppClient  # lazy import
+
     client = KoreaGasAppClient.from_config_entry(hass, entry)
     coordinator = KoreaGasAppDataUpdateCoordinator(hass, client)
 
@@ -193,6 +202,8 @@ async def _attempt_auto_submission(
     reading_round: str,
 ) -> None:
     """Try to auto-submit a self-reading; write result to sensor regardless of outcome."""
+    from .api import KoreaGasAppApiError  # lazy import
+
     if coordinator.data is None:
         return
     if not coordinator.data.indication.self_reading_registered:
