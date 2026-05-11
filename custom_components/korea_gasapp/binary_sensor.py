@@ -19,10 +19,10 @@ _LOGGER = logging.getLogger(__name__)
 
 # ── Attribute key constants ───────────────────────────────────────────────────
 ATTR_LAST_ATTEMPT_AT = "last_attempt_at"
-ATTR_READING = "reading"
-ATTR_RESULT_MESSAGE = "result_message"
-ATTR_FAILURE_REASON = "failure_reason"
-ATTR_SOURCE = "source"   # "auto" | "manual"
+ATTR_READING         = "reading"
+ATTR_RESULT_MESSAGE  = "result_message"
+ATTR_FAILURE_REASON  = "failure_reason"
+ATTR_SOURCE          = "source"   # "auto" | "manual"
 
 _RESTORE_ATTRS = frozenset({
     ATTR_LAST_ATTEMPT_AT,
@@ -85,7 +85,16 @@ class KoreaGasAppSubmissionResultBinarySensor(
     """
 
     _attr_has_entity_name = False
-    _attr_name = "Gas meter submission result"
+    _attr_name = "가스미터 자가검침 제출 결과"
+
+    @property
+    def icon(self) -> str:
+        """성공이면 체크 아이콘, 실패/미제출이면 알림 아이콘."""
+        if self._success is True:
+            return "mdi:check-circle-outline"
+        if self._success is False:
+            return "mdi:alert-circle-outline"
+        return "mdi:help-circle-outline"
 
     def __init__(self, coordinator: KoreaGasAppDataUpdateCoordinator) -> None:
         super().__init__(coordinator)
@@ -104,14 +113,12 @@ class KoreaGasAppSubmissionResultBinarySensor(
     async def async_added_to_hass(self) -> None:
         """Restore the previous state and mark the entity as ready for writes."""
         await super().async_added_to_hass()
-
         last = await self.async_get_last_state()
         if last is not None:
             self._success = last.state == "on"
             self._extra = {
                 k: v for k, v in last.attributes.items() if k in _RESTORE_ATTRS
             }
-
         self._ready = True
 
     # ── HA properties ─────────────────────────────────────────────────────
@@ -131,9 +138,9 @@ class KoreaGasAppSubmissionResultBinarySensor(
         self._success = True
         self._extra = {
             ATTR_LAST_ATTEMPT_AT: _now_iso(),
-            ATTR_READING: reading,
-            ATTR_RESULT_MESSAGE: message or "성공",
-            ATTR_SOURCE: source,
+            ATTR_READING:         reading,
+            ATTR_RESULT_MESSAGE:  message or "성공",
+            ATTR_SOURCE:          source,
         }
         self._write_state()
 
@@ -142,19 +149,19 @@ class KoreaGasAppSubmissionResultBinarySensor(
         self._success = False
         self._extra = {
             ATTR_LAST_ATTEMPT_AT: _now_iso(),
-            ATTR_FAILURE_REASON: reason,
-            ATTR_SOURCE: source,
+            ATTR_FAILURE_REASON:  reason,
+            ATTR_SOURCE:          source,
         }
         if reading is not None:
             self._extra[ATTR_READING] = reading
         self._write_state()
 
     def _write_state(self) -> None:
-        """Call async_write_ha_state only after the entity is fully registered."""
+        """async_write_ha_state를 엔티티 등록 완료 후에만 호출한다."""
         if self._ready:
             self.async_write_ha_state()
 
 
 def _now_iso() -> str:
-    """Return the current local time as an ISO-8601 string (seconds precision)."""
+    """현재 로컬 시각을 ISO-8601(초 단위) 문자열로 반환한다."""
     return datetime.now().isoformat(timespec="seconds")
