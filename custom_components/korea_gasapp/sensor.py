@@ -6,10 +6,10 @@ import logging
 from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import KoreaGasAppConfigEntry
 from .coordinator import KoreaGasAppDataUpdateCoordinator
 from .entity_helper import build_device_info, get_account_id
 
@@ -18,7 +18,7 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(
     hass,
-    entry: KoreaGasAppConfigEntry,
+    entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Korea Gas App sensors.
@@ -27,7 +27,7 @@ async def async_setup_entry(
     created for accounts registered for the self-reading service; a coordinator
     listener adds it automatically when registration is detected.
     """
-    coordinator = entry.runtime_data
+    coordinator: KoreaGasAppDataUpdateCoordinator = entry.runtime_data
     added_uids: set[str] = set()
 
     async_add_entities([
@@ -157,8 +157,14 @@ class KoreaGasAppAnnualBillSensor(_KoreaGasAppSensorBase):
             return {}
         bills = self.coordinator.data.annual_bills
         return {
-            "monthly_usage_m3":   {b.request_ym: b.usage_qty    for b in bills if b.usage_qty    is not None},
-            "monthly_charge_krw": {b.request_ym: b.charge_amt_qty for b in bills if b.charge_amt_qty is not None},
+            "monthly_usage_m3": {
+                b.request_ym: b.usage_qty
+                for b in bills if b.usage_qty is not None
+            },
+            "monthly_charge_krw": {
+                b.request_ym: b.charge_amt_qty
+                for b in bills if b.charge_amt_qty is not None
+            },
         }
 
 
