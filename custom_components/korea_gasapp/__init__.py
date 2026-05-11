@@ -34,8 +34,6 @@ from .coordinator import KoreaGasAppDataUpdateCoordinator
 
 PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR]
 
-type KoreaGasAppConfigEntry = ConfigEntry[KoreaGasAppDataUpdateCoordinator]
-
 _LOGGER = logging.getLogger(__name__)
 
 SERVICE_SUBMIT_METER_READING = "submit_meter_reading"
@@ -69,10 +67,17 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             result.usage,
             result.return_message,
         )
-        _notify_sensor_success(coordinator, reading=reading, message=result.return_message, source="manual")
+        _notify_sensor_success(
+            coordinator,
+            reading=reading,
+            message=result.return_message,
+            source="manual",
+        )
         await coordinator.async_request_refresh()
 
-    hass.services.async_register(DOMAIN, SERVICE_SUBMIT_METER_READING, _handle_submit, schema=_SUBMIT_SCHEMA)
+    hass.services.async_register(
+        DOMAIN, SERVICE_SUBMIT_METER_READING, _handle_submit, schema=_SUBMIT_SCHEMA
+    )
     return True
 
 
@@ -114,7 +119,10 @@ def _entry_matches_account(entry: ConfigEntry, account: str) -> bool:
     return normalized in {str(v) for v in candidates if v not in (None, "")}
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: KoreaGasAppConfigEntry) -> bool:
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry[KoreaGasAppDataUpdateCoordinator],
+) -> bool:
     """Set up a Korea Gas App config entry."""
     client = KoreaGasAppClient.from_config_entry(hass, entry)
     coordinator = KoreaGasAppDataUpdateCoordinator(hass, client)
@@ -129,18 +137,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: KoreaGasAppConfigEntry) 
     return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: KoreaGasAppConfigEntry) -> bool:
+async def async_unload_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry[KoreaGasAppDataUpdateCoordinator],
+) -> bool:
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
-async def _handle_options_update(hass: HomeAssistant, entry: KoreaGasAppConfigEntry) -> None:
+async def _handle_options_update(
+    hass: HomeAssistant,
+    entry: ConfigEntry[KoreaGasAppDataUpdateCoordinator],
+) -> None:
     """Reload the entry when options change so the new reading entity/round takes effect."""
     await hass.config_entries.async_reload(entry.entry_id)
 
 
 def _schedule_daily(
     hass: HomeAssistant,
-    entry: KoreaGasAppConfigEntry,
+    entry: ConfigEntry[KoreaGasAppDataUpdateCoordinator],
     coordinator: KoreaGasAppDataUpdateCoordinator,
 ) -> CALLBACK_TYPE:
     """Register a time-change callback that fires once a day at FIXED_UPDATE_HOUR.
@@ -148,7 +162,7 @@ def _schedule_daily(
     Each day the callback:
       1. Refreshes all coordinator data (bills + indication info).
       2. If the account is registered for self-reading and today is
-         period_start + 1, attempts automatic submission.  Any outcome
+         period_start + 1, attempts automatic submission. Any outcome
          (success or failure) is written to the submission-result sensor.
     """
     reading_round = _entry_value(entry, CONF_READING_ROUND, DEFAULT_READING_ROUND)
@@ -173,7 +187,7 @@ def _schedule_daily(
 
 async def _attempt_auto_submission(
     hass: HomeAssistant,
-    entry: KoreaGasAppConfigEntry,
+    entry: ConfigEntry[KoreaGasAppDataUpdateCoordinator],
     coordinator: KoreaGasAppDataUpdateCoordinator,
     now: datetime,
     reading_round: str,
@@ -218,11 +232,21 @@ async def _attempt_auto_submission(
         "Auto submission succeeded for '%s': reading=%s usage=%s message=%s",
         entry.title, reading, result.usage, result.return_message,
     )
-    _notify_sensor_success(coordinator, reading=reading, message=result.return_message, source="auto")
+    _notify_sensor_success(
+        coordinator,
+        reading=reading,
+        message=result.return_message,
+        source="auto",
+    )
     await coordinator.async_request_refresh()
 
 
-def _fail(reason: str, coordinator: KoreaGasAppDataUpdateCoordinator, *, reading: int | None) -> None:
+def _fail(
+    reason: str,
+    coordinator: KoreaGasAppDataUpdateCoordinator,
+    *,
+    reading: int | None,
+) -> None:
     """Log a warning and record failure on the result sensor."""
     _LOGGER.warning("Auto submission skipped: %s", reason)
     _notify_sensor_failure(coordinator, reading=reading, reason=reason, source="auto")
@@ -274,7 +298,11 @@ def _resolve_submit_day(coordinator: KoreaGasAppDataUpdateCoordinator) -> int | 
         return None
 
 
-def _entry_value(entry: KoreaGasAppConfigEntry, key: str, default: Any = None) -> Any:
+def _entry_value(
+    entry: ConfigEntry[KoreaGasAppDataUpdateCoordinator],
+    key: str,
+    default: Any = None,
+) -> Any:
     """Read a value from options first, falling back to config-entry data."""
     return entry.options.get(key, entry.data.get(key, default))
 
