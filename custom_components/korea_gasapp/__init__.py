@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from asyncio import sleep
 from datetime import datetime, time
 from typing import Any
 
@@ -89,7 +90,7 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             result.usage,
             result.return_message,
         )
-        await coordinator.async_request_refresh()
+        await _async_refresh_after_submission(coordinator)
 
     hass.services.async_register(
         DOMAIN,
@@ -208,7 +209,7 @@ def _schedule_auto_submission(
             result.usage,
             result.return_message,
         )
-        await coordinator.async_request_refresh()
+        await _async_refresh_after_submission(coordinator)
 
     _LOGGER.info(
         "Scheduled Korea Gas App auto submission for day %s at %s using %s",
@@ -232,6 +233,14 @@ def _entry_value(
 ) -> Any:
     """Return an option value, falling back to config-entry data."""
     return entry.options.get(key, entry.data.get(key, default))
+
+
+async def _async_refresh_after_submission(
+    coordinator: KoreaGasAppDataUpdateCoordinator,
+) -> None:
+    """Refresh coordinator data after the backend has time to reflect a submission."""
+    await sleep(3)
+    await coordinator.async_request_refresh()
 
 
 def _validate_reading_range(
