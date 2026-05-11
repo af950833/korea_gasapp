@@ -58,6 +58,7 @@ class KoreaGasAppEndpointUnknownError(KoreaGasAppApiError):
 class BillDetail:
     """Parsed line-items from the current-month bill detail areas."""
 
+    monthly_subtotal: int | None = None   # 당월 소계
     basic_charge: int | None = None
     usage_charge: int | None = None
     vat: int | None = None
@@ -90,6 +91,9 @@ class CurrentBillSnapshot:
     status: str | None = None
     payable: bool | None = None
     detail: BillDetail = field(default_factory=BillDetail)
+    # All key-value rows from areaEtc / areaPayment / areaUnpayment / areaUsage,
+    # stored as-is for display in HA attributes without any schema coupling.
+    raw_areas: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -185,6 +189,7 @@ class MemberLoginResult:
 #   "float" – plain numeric string      → float
 #   ("float", "<suffix>") – strip suffix first, then parse as float
 _BILL_DETAIL_KEY_MAP: dict[str, tuple[str, str | tuple[str, str]]] = {
+    "당월 소계":      ("monthly_subtotal",    "krw"),
     "기본요금":       ("basic_charge",        "krw"),
     "사용요금":       ("usage_charge",        "krw"),
     "부가세":         ("vat",                 "krw"),
@@ -317,7 +322,7 @@ class KoreaGasAppClient:
         try:
             data = await self._get(
                 "relay/bills/month",
-                self._contract_params(history="Y", deadlineFlag="", requestYm=""),
+                self._contract_params(),
             )
         except KoreaGasAppApiError as err:
             _LOGGER.warning("Could not fetch current bill: %s", err)
@@ -328,6 +333,8 @@ class KoreaGasAppClient:
             return CurrentBillSnapshot()
 
         detail = BillDetail()
+        raw_areas: dict[str, str] = {}
+
         all_areas = (
             data.get("areaEtc") or [],
             data.get("areaPayment") or [],
@@ -336,8 +343,14 @@ class KoreaGasAppClient:
         )
         for area in all_areas:
             for item in area:
-                if isinstance(item, dict):
-                    self._apply_bill_detail_item(detail, item)
+                if not isinstance(item, dict):
+                    continue
+                self._apply_bill_detail_item(detail, item)
+                # Collect every key-value as-is for raw attribute display
+                key = item.get("key", "")
+                value = item.get("value", "")
+                if key:
+                    raw_areas[key] = value
 
         return CurrentBillSnapshot(
             charge_krw=_parse_krw(data.get("amount", "")),
@@ -345,6 +358,7 @@ class KoreaGasAppClient:
             status=data.get("status"),
             payable=data.get("payable") == "Y",
             detail=detail,
+            raw_areas=raw_areas,
         )
 
     @staticmethod
@@ -354,6 +368,7 @@ class KoreaGasAppClient:
         raw_value = item.get("value", "")
         mapping = _BILL_DETAIL_KEY_MAP.get(label)
         if mapping is None:
+            _LOGGER.debug("Unknown bill detail key (ignored): %r = %r", label, raw_value)
             return
 
         field_name, parser = mapping
