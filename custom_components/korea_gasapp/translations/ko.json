@@ -30,40 +30,18 @@
         "data": {
           "use_contract_num": "가스 계약"
         }
-      },
-      "manual_session": {
-        "title": "가스앱 세션 정보",
-        "description": "모바일 앱 세션에서 확인한 계정 식별값을 입력하세요.",
-        "data": {
-          "account_id": "계정 ID",
-          "use_contract_num": "사용계약번호",
-          "customer_no": "고객번호",
-          "auth_token": "X-TOKEN",
-          "member_no": "X-MEMBER",
-          "company_code": "X-COMPANY",
-          "platform": "X-PLATFORM",
-          "app_version": "X-VERSION",
-          "os_version": "X-OS-VERSION",
-          "device_name": "X-DEVICE-NAME",
-          "device_id": "X-DEVID",
-          "user_agent": "User-Agent",
-          "adid": "X-ADID",
-          "tid": "X-TID",
-          "submit_day": "자가검침일",
-          "submit_time": "자가검침 시간",
-          "reading_entity_id": "가스미터 현재값 엔티티",
-          "max_reading_delta": "검침 변화 최대값"
-        }
       }
     },
     "error": {
-      "invalid_auth": "필수 가스앱 세션 값이 없습니다.",
       "invalid_identity_no": "주민등록번호 앞부분을 950301-1 형식으로 입력하세요.",
       "invalid_otp": "인증번호가 거부되었습니다.",
       "login_failed": "가스앱 로그인 요청에 실패했습니다.",
-      "missing_contract": "사용계약번호 또는 고객번호를 입력하세요.",
       "no_contract": "이 계정에서 가스 계약을 찾지 못했습니다.",
       "sms_request_failed": "SMS 인증번호를 요청하지 못했습니다."
+    },
+    "abort": {
+      "reauth_successful": "가스앱 재인증이 완료되었습니다.",
+      "wrong_account": "인증한 가스앱 계정이 이 구성 항목과 일치하지 않습니다."
     }
   },
   "options": {

@@ -30,40 +30,18 @@
         "data": {
           "use_contract_num": "Gas contract"
         }
-      },
-      "manual_session": {
-        "title": "Korea Gas App session values",
-        "description": "Enter the account identifiers discovered from the mobile app session.",
-        "data": {
-          "account_id": "Account ID",
-          "use_contract_num": "Use contract number",
-          "customer_no": "Customer number",
-          "auth_token": "X-TOKEN",
-          "member_no": "X-MEMBER",
-          "company_code": "X-COMPANY",
-          "platform": "X-PLATFORM",
-          "app_version": "X-VERSION",
-          "os_version": "X-OS-VERSION",
-          "device_name": "X-DEVICE-NAME",
-          "device_id": "X-DEVID",
-          "user_agent": "User-Agent",
-          "adid": "X-ADID",
-          "tid": "X-TID",
-          "submit_day": "Meter reading day",
-          "submit_time": "Meter reading time",
-          "reading_entity_id": "Meter reading entity",
-          "max_reading_delta": "Maximum meter reading change"
-        }
       }
     },
     "error": {
-      "invalid_auth": "Required Gas App session values are missing",
       "invalid_identity_no": "Enter the resident number front part like 950301-1",
       "invalid_otp": "The verification code was rejected",
       "login_failed": "The Gas App login request failed",
-      "missing_contract": "Enter a use contract number or customer number",
       "no_contract": "No gas contract was returned for this account",
       "sms_request_failed": "Could not request an SMS verification code"
+    },
+    "abort": {
+      "reauth_successful": "Korea Gas App reauthentication was successful",
+      "wrong_account": "The verified Gas App account does not match this config entry"
     }
   },
   "options": {
