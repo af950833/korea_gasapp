@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from typing import Any
 from urllib.parse import urljoin
 
@@ -24,15 +25,24 @@ from .const import (
     CONF_MEMBER_NO,
     CONF_OS_VERSION,
     CONF_PLATFORM,
+    CONF_PUSH_TOKEN,
     CONF_TID,
     CONF_USER_AGENT,
     CONF_USE_CONTRACT_NUM,
     DEFAULT_API_BASE_URL,
     DEFAULT_APP_PLATFORM,
     DEFAULT_APP_VERSION,
+    DEFAULT_IOS_APP_VERSION,
+    DEFAULT_IOS_DEVICE_NAME,
+    DEFAULT_IOS_OS_VERSION,
+    DEFAULT_IOS_PLATFORM,
+    DEFAULT_IOS_USER_AGENT,
+    DEFAULT_IOS_WEBVIEW_USER_AGENT,
     DEFAULT_USER_AGENT,
     DEFAULT_WEB_VERSION,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class KoreaGasAppApiError(Exception):
@@ -119,6 +129,7 @@ class KoreaGasAppClient:
         device_name: str | None = None,
         device_id: str | None = None,
         user_agent: str | None = None,
+        push_token: str | None = None,
         base_url: str = DEFAULT_API_BASE_URL,
     ) -> None:
         """Initialize the client."""
@@ -137,7 +148,9 @@ class KoreaGasAppClient:
         self._device_name = device_name
         self._device_id = device_id
         self._user_agent = user_agent or DEFAULT_USER_AGENT
+        self._push_token = push_token
         self._base_url = base_url
+        self._normalize_ios_profile()
 
     @classmethod
     def from_config_entry(
@@ -162,7 +175,27 @@ class KoreaGasAppClient:
             device_name=entry.data.get(CONF_DEVICE_NAME),
             device_id=entry.data.get(CONF_DEVICE_ID),
             user_agent=entry.data.get(CONF_USER_AGENT),
+            push_token=entry.data.get(CONF_PUSH_TOKEN),
         )
+
+    def _normalize_ios_profile(self) -> None:
+        """Use the iOS webview profile for regular API requests."""
+        if str(self._platform).upper() != DEFAULT_IOS_PLATFORM:
+            return
+        if not self._auth_token and not self._member_no:
+            return
+
+        if not self._app_version or self._app_version == DEFAULT_APP_VERSION:
+            self._app_version = DEFAULT_IOS_APP_VERSION
+        if (
+            not self._user_agent
+            or self._user_agent.startswith("WunderFlo Appstore/")
+            or self._user_agent == DEFAULT_USER_AGENT
+        ):
+            self._user_agent = DEFAULT_IOS_WEBVIEW_USER_AGENT
+        self._os_version = None
+        self._device_name = None
+        self._device_id = None
 
     async def validate(self) -> None:
         """Validate credentials.
@@ -302,9 +335,42 @@ class KoreaGasAppClient:
         )
         return await self._get("init", {}, headers=headers)
 
+    async def async_refresh_session(self) -> None:
+        """Register the current device session like the native app does."""
+        await self.validate()
+        if not self._adid and not self._device_id:
+            _LOGGER.debug("Skipping Gas App session refresh: no device id is saved")
+            return
+
+        device_id = self._adid or self._device_id or ""
+        payload: dict[str, Any] = {
+            "osVersion": DEFAULT_IOS_OS_VERSION,
+            "adid": device_id,
+            "deviceName": DEFAULT_IOS_DEVICE_NAME,
+        }
+        if self._push_token:
+            payload["pushToken"] = self._push_token
+
+        headers = self._native_ios_headers(company_code="0", device_id=device_id)
+        _LOGGER.debug(
+            "Refreshing Gas App device session: device_name=%s os_version=%s "
+            "has_push_token=%s",
+            DEFAULT_IOS_DEVICE_NAME,
+            DEFAULT_IOS_OS_VERSION,
+            bool(self._push_token),
+        )
+        await self._put_json("sessions", payload, headers=headers)
+        _LOGGER.debug("Gas App device session refresh succeeded")
+
     async def async_get_usage(self) -> GasUsageSnapshot:
         """Fetch the latest usage snapshot."""
         await self.validate()
+        try:
+            await self.async_refresh_session()
+        except KoreaGasAppAuthError:
+            raise
+        except KoreaGasAppApiError as err:
+            _LOGGER.debug("Could not refresh Gas App device session: %s", err)
 
         home = await self._get(
             "home",
@@ -529,13 +595,7 @@ class KoreaGasAppClient:
             params=params,
             headers=headers or self._headers,
         ) as response:
-            if response.status == 401:
-                raise KoreaGasAppAuthError("Gas App session token is invalid or expired")
-            if response.status >= 400:
-                body = await response.text()
-                raise KoreaGasAppApiError(
-                    f"Gas App API request failed: {response.status} {body[:200]}"
-                )
+            await self._raise_for_status(response, "GET", path)
             return await response.json()
 
     async def _post_json(
@@ -554,13 +614,31 @@ class KoreaGasAppClient:
             json=payload,
             headers=headers or self._headers,
         ) as response:
-            if response.status == 401:
-                raise KoreaGasAppAuthError("Gas App session token is invalid or expired")
-            if response.status >= 400:
-                body = await response.text()
-                raise KoreaGasAppApiError(
-                    f"Gas App API request failed: {response.status} {body[:200]}"
-                )
+            await self._raise_for_status(response, "POST", path)
+            return await response.json()
+
+    async def _put_json(
+        self,
+        path: str,
+        payload: dict[str, Any],
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> Any:
+        """Run a PUT JSON request against the Gas App web API."""
+        if self._session is None:
+            raise KoreaGasAppEndpointUnknownError("HTTP session is not available")
+
+        async with self._session.put(
+            urljoin(self._base_url, path),
+            json=payload,
+            headers=headers or self._headers,
+        ) as response:
+            await self._raise_for_status(response, "PUT", path)
+            if response.content_length == 0:
+                return None
+            text = await response.text()
+            if not text:
+                return None
             return await response.json()
 
     @property
@@ -575,7 +653,7 @@ class KoreaGasAppClient:
     @property
     def _anonymous_headers(self) -> dict[str, str]:
         """Return headers used before a Gas App member session exists."""
-        return self._headers_with(auth_token="", member_no="", company_code="null")
+        return self._headers_with(auth_token="", member_no="", company_code="0")
 
     def _headers_with(
         self,
@@ -585,7 +663,7 @@ class KoreaGasAppClient:
         company_code: str,
     ) -> dict[str, str]:
         """Return Gas App headers with explicit auth fields."""
-        return {
+        headers = {
             "Accept": "*/*",
             "User-Agent": self._user_agent,
             "X-VERSION": self._app_version,
@@ -593,13 +671,57 @@ class KoreaGasAppClient:
             "X-TOKEN": auth_token,
             "X-MEMBER": member_no,
             "X-COMPANY": company_code,
-            "X-ADID": self._adid or "",
-            "X-TID": self._tid or "",
             "X-WEBVERSION": DEFAULT_WEB_VERSION,
-            "X-OS-VERSION": self._os_version or "",
-            "X-DEVICE-NAME": self._device_name or "",
-            "X-DEVID": self._device_id or "",
         }
+        if self._adid:
+            headers["X-ADID"] = self._adid
+        headers["X-TID"] = self._tid or ""
+        if self._os_version:
+            headers["X-OS-VERSION"] = self._os_version
+        if self._device_name:
+            headers["X-DEVICE-NAME"] = self._device_name
+        if self._device_id:
+            headers["X-DEVID"] = self._device_id
+        return headers
+
+    def _native_ios_headers(self, *, company_code: str, device_id: str) -> dict[str, str]:
+        """Return headers used by the native iOS session endpoint."""
+        return {
+            "Accept": "*/*",
+            "User-Agent": DEFAULT_IOS_USER_AGENT,
+            "X-VERSION": DEFAULT_IOS_APP_VERSION,
+            "X-PLATFORM": DEFAULT_IOS_PLATFORM,
+            "X-TOKEN": self._auth_token or "",
+            "X-MEMBER": self._member_no or "",
+            "X-COMPANY": company_code,
+            "X-ADID": self._adid or device_id,
+            "X-WEBVERSION": DEFAULT_WEB_VERSION,
+            "X-OS-VERSION": DEFAULT_IOS_OS_VERSION,
+            "X-DEVICE-NAME": DEFAULT_IOS_DEVICE_NAME,
+            "X-DEVID": device_id,
+        }
+
+    @staticmethod
+    async def _raise_for_status(response: Any, method: str, path: str) -> None:
+        """Raise a typed API error for unsuccessful responses."""
+        if response.status == 401:
+            raise KoreaGasAppAuthError("Gas App session token is invalid or expired")
+        if response.status == 418:
+            body = await response.text()
+            _LOGGER.debug(
+                "Gas App %s %s rejected with HTTP 418: %s",
+                method,
+                path,
+                body[:200],
+            )
+            raise KoreaGasAppAuthError(
+                "Gas App rejected the saved session; reauthentication is required"
+            )
+        if response.status >= 400:
+            body = await response.text()
+            raise KoreaGasAppApiError(
+                f"Gas App API request failed: {response.status} {body[:200]}"
+            )
 
     @staticmethod
     def _first_item(value: Any) -> dict[str, Any] | None:

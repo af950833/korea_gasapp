@@ -6,9 +6,15 @@ from datetime import timedelta
 import logging
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import GasUsageSnapshot, KoreaGasAppApiError, KoreaGasAppClient
+from .api import (
+    GasUsageSnapshot,
+    KoreaGasAppApiError,
+    KoreaGasAppAuthError,
+    KoreaGasAppClient,
+)
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -36,5 +42,7 @@ class KoreaGasAppDataUpdateCoordinator(DataUpdateCoordinator[GasUsageSnapshot]):
         """Fetch the newest data."""
         try:
             return await self.client.async_get_usage()
+        except KoreaGasAppAuthError as err:
+            raise ConfigEntryAuthFailed(str(err)) from err
         except KoreaGasAppApiError as err:
             raise UpdateFailed(str(err)) from err
