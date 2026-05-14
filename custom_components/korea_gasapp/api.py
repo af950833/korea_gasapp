@@ -222,6 +222,7 @@ class KoreaGasAppClient:
         name: str,
     ) -> SmsRequestResult:
         """Request a NICE SMS verification code."""
+        await self.async_prepare_sms_terms(mobile_co)
         response = await self._post_json(
             "extern/auth/nice/sms/request",
             {
@@ -247,6 +248,28 @@ class KoreaGasAppClient:
             request_no=str(request_no),
             response_uniq_id=str(response_uniq_id),
         )
+
+    async def async_prepare_sms_terms(self, mobile_co: str) -> None:
+        """Load terms documents that the app fetches before requesting SMS."""
+        carrier = {"1": "SKT", "2": "KT", "3": "LGU"}.get(str(mobile_co), "SKT")
+        categories = (
+            f"\ubcf8\uc778\uc778\uc99d \uc57d\uad00 {carrier}",
+            "\ucd5c\ucd08 \ud68c\uc6d0 \uac00\uc785 \uc57d\uad00",
+            "\ucd5c\ucd08 \ud68c\uc6d0 \uac00\uc785 \uc57d\uad00-\ub3c4\uc2dc\uac00\uc2a4 \uc0ac \uc815\ubcf4 \uc870\ud68c",
+        )
+        for category in categories:
+            try:
+                await self._get(
+                    "documents/search/0",
+                    {"category": category},
+                    headers=self._anonymous_headers,
+                )
+            except KoreaGasAppApiError as err:
+                _LOGGER.debug(
+                    "Ignoring Gas App terms document load failure for %s: %s",
+                    category,
+                    err,
+                )
 
     async def async_confirm_sms(
         self,
@@ -287,7 +310,7 @@ class KoreaGasAppClient:
         ci: str,
         di: str,
         adid: str,
-        marketing_acceptance: str = "N",
+        marketing_acceptance: str = "Y",
     ) -> MemberLoginResult:
         """Create or re-register a Gas App member session."""
         response = await self._post_json(
@@ -337,7 +360,10 @@ class KoreaGasAppClient:
 
     async def async_refresh_session(self) -> None:
         """Register the current device session like the native app does."""
-        await self.validate()
+        if not self._auth_token or not self._member_no:
+            raise KoreaGasAppAuthError(
+                "X-TOKEN and X-MEMBER values from the app session are required"
+            )
         if not self._adid and not self._device_id:
             _LOGGER.debug("Skipping Gas App session refresh: no device id is saved")
             return
@@ -365,12 +391,6 @@ class KoreaGasAppClient:
     async def async_get_usage(self) -> GasUsageSnapshot:
         """Fetch the latest usage snapshot."""
         await self.validate()
-        try:
-            await self.async_refresh_session()
-        except KoreaGasAppAuthError:
-            raise
-        except KoreaGasAppApiError as err:
-            _LOGGER.debug("Could not refresh Gas App device session: %s", err)
 
         home = await self._get(
             "home",
@@ -609,10 +629,12 @@ class KoreaGasAppClient:
         if self._session is None:
             raise KoreaGasAppEndpointUnknownError("HTTP session is not available")
 
+        request_headers = dict(headers or self._headers)
+        request_headers.setdefault("Content-Type", "application/json;charset=utf-8")
         async with self._session.post(
             urljoin(self._base_url, path),
             json=payload,
-            headers=headers or self._headers,
+            headers=request_headers,
         ) as response:
             await self._raise_for_status(response, "POST", path)
             return await response.json()
@@ -653,7 +675,7 @@ class KoreaGasAppClient:
     @property
     def _anonymous_headers(self) -> dict[str, str]:
         """Return headers used before a Gas App member session exists."""
-        return self._headers_with(auth_token="", member_no="", company_code="0")
+        return self._headers_with(auth_token="", member_no="", company_code="null")
 
     def _headers_with(
         self,
@@ -664,7 +686,13 @@ class KoreaGasAppClient:
     ) -> dict[str, str]:
         """Return Gas App headers with explicit auth fields."""
         headers = {
-            "Accept": "*/*",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "ko-KR,ko;q=0.9",
+            "Origin": "https://app.gasapp.co.kr",
+            "Referer": "https://app.gasapp.co.kr/",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
             "User-Agent": self._user_agent,
             "X-VERSION": self._app_version,
             "X-PLATFORM": self._platform,

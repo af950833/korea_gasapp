@@ -6,7 +6,7 @@ import logging
 from typing import Any
 from uuid import uuid4
 
-from aiohttp import ClientSession, DummyCookieJar
+from aiohttp import ClientSession
 import voluptuous as vol
 
 from homeassistant import config_entries
@@ -118,7 +118,7 @@ class KoreaGasAppConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             device_id = str(uuid4()).upper()
             if not errors:
                 try:
-                    async with ClientSession(cookie_jar=DummyCookieJar()) as session:
+                    async with ClientSession() as session:
                         sms_result = await self._auth_client(
                             session, device_id
                         ).async_request_sms(
@@ -194,7 +194,7 @@ class KoreaGasAppConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             login = self._sms_login
             try:
-                async with ClientSession(cookie_jar=DummyCookieJar()) as session:
+                async with ClientSession() as session:
                     auth_client = self._auth_client(session, login[CONF_DEVICE_ID])
                     confirm_result = await auth_client.async_confirm_sms(
                         request_no=login["request_no"],
@@ -213,12 +213,27 @@ class KoreaGasAppConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         adid=login[CONF_ADID],
                     )
                     init_payload = await self._session_client(
-                        session, login[CONF_DEVICE_ID]
+                        session,
+                        login[CONF_DEVICE_ID],
+                        auth_token=member.auth_token,
+                        member_no=member.member_no,
                     ).async_get_init(
                         auth_token=member.auth_token,
                         member_no=member.member_no,
                         company_code="0",
                     )
+                    try:
+                        await self._session_client(
+                            session,
+                            login[CONF_DEVICE_ID],
+                            auth_token=member.auth_token,
+                            member_no=member.member_no,
+                        ).async_refresh_session()
+                    except KoreaGasAppApiError as err:
+                        _LOGGER.debug(
+                            "Could not register Gas App session after login: %s",
+                            err,
+                        )
             except KoreaGasAppAuthError:
                 errors["base"] = "invalid_otp"
             except KoreaGasAppApiError as err:
@@ -294,12 +309,22 @@ class KoreaGasAppConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             user_agent=DEFAULT_IOS_WEBVIEW_USER_AGENT,
         )
 
-    def _session_client(self, session: ClientSession, device_id: str) -> KoreaGasAppClient:
+    def _session_client(
+        self,
+        session: ClientSession,
+        device_id: str,
+        *,
+        auth_token: str | None = None,
+        member_no: str | None = None,
+    ) -> KoreaGasAppClient:
         """Return a client configured like the native iOS app session flow."""
         return KoreaGasAppClient(
             session,
             account_id="",
             customer_no="",
+            auth_token=auth_token,
+            member_no=member_no,
+            company_code="0",
             adid=device_id,
             app_version=DEFAULT_IOS_APP_VERSION,
             platform=DEFAULT_IOS_PLATFORM,
@@ -308,13 +333,6 @@ class KoreaGasAppConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             device_id=device_id,
             user_agent=DEFAULT_IOS_USER_AGENT,
         )
-
-    def _entry_default(self, key: str, default: Any) -> Any:
-        """Return a default value from the reauth entry when available."""
-        reauth_entry = getattr(self, "_reauth_entry", None)
-        if reauth_entry is None:
-            return default
-        return reauth_entry.options.get(key, reauth_entry.data.get(key, default))
 
     async def _async_create_sms_entry(
         self,

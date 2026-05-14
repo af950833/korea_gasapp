@@ -32,7 +32,7 @@ DEFAULT_API_BASE_URL = "https://app.gasapp.co.kr/api/"
 DEFAULT_APP_PLATFORM = "android"
 DEFAULT_APP_VERSION = "11.5.1492"
 DEFAULT_USER_AGENT = "WunderFlo Appstore/11.5.1492"
-DEFAULT_WEB_VERSION = "6.10.442"
+DEFAULT_WEB_VERSION = "6.10.443"
 
 DEFAULT_IOS_APP_VERSION = "4.3.7.27265"
 DEFAULT_IOS_DEVICE_NAME = "iPad11,1"
@@ -40,7 +40,7 @@ DEFAULT_IOS_OS_VERSION = "26.4.2"
 DEFAULT_IOS_PLATFORM = "IOS"
 DEFAULT_IOS_USER_AGENT = (
     "WunderFlo Appstore/4.3.7 (iPad; iOS 26.4.2; Scale/2.00) "
-    "webVersion/6.10.442"
+    "webVersion/6.10.443"
 )
 DEFAULT_IOS_WEBVIEW_USER_AGENT = (
     "Mozilla/5.0 (iPad; CPU OS 18_7 like Mac OS X) "
