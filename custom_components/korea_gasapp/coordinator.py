@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from asyncio import sleep
 from datetime import timedelta
 import logging
 
@@ -18,6 +19,9 @@ from .api import (
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
+
+UPDATE_RETRY_ATTEMPTS = 3
+UPDATE_RETRY_DELAY_SECONDS = 10
 
 
 class KoreaGasAppDataUpdateCoordinator(DataUpdateCoordinator[GasUsageSnapshot]):
@@ -40,9 +44,23 @@ class KoreaGasAppDataUpdateCoordinator(DataUpdateCoordinator[GasUsageSnapshot]):
 
     async def _async_update_data(self) -> GasUsageSnapshot:
         """Fetch the newest data."""
-        try:
-            return await self.client.async_get_usage()
-        except KoreaGasAppAuthError as err:
-            raise ConfigEntryAuthFailed(str(err)) from err
-        except KoreaGasAppApiError as err:
-            raise UpdateFailed(str(err)) from err
+        last_api_error: KoreaGasAppApiError | None = None
+        for attempt in range(1, UPDATE_RETRY_ATTEMPTS + 1):
+            try:
+                return await self.client.async_get_usage()
+            except KoreaGasAppApiError as err:
+                last_api_error = err
+                if attempt >= UPDATE_RETRY_ATTEMPTS:
+                    break
+                _LOGGER.debug(
+                    "Gas App update attempt %s/%s failed; retrying in %s seconds: %s",
+                    attempt,
+                    UPDATE_RETRY_ATTEMPTS,
+                    UPDATE_RETRY_DELAY_SECONDS,
+                    err,
+                )
+                await sleep(UPDATE_RETRY_DELAY_SECONDS)
+
+        if isinstance(last_api_error, KoreaGasAppAuthError):
+            raise ConfigEntryAuthFailed(str(last_api_error)) from last_api_error
+        raise UpdateFailed(str(last_api_error or "Gas App update failed"))
