@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+import re
 from typing import Any
 from urllib.parse import urljoin
 
@@ -150,6 +151,8 @@ class KoreaGasAppClient:
         self._user_agent = user_agent or DEFAULT_USER_AGENT
         self._push_token = push_token
         self._base_url = base_url
+        self._web_version = DEFAULT_WEB_VERSION
+        self._web_version_loaded = False
         self._normalize_ios_profile()
 
     @classmethod
@@ -177,6 +180,55 @@ class KoreaGasAppClient:
             user_agent=entry.data.get(CONF_USER_AGENT),
             push_token=entry.data.get(CONF_PUSH_TOKEN),
         )
+
+    async def async_update_web_version(self, *, force: bool = False) -> None:
+        """Discover the currently deployed Gas App web frontend version."""
+        if (self._web_version_loaded and not force) or self._session is None:
+            return
+
+        self._web_version_loaded = True
+        try:
+            async with self._session.get(
+                urljoin(self._base_url, "/"),
+                headers={
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "ko-KR,ko;q=0.9",
+                    "User-Agent": self._user_agent,
+                },
+            ) as response:
+                await self._raise_for_status(response, "GET", "/")
+                html = await response.text()
+
+            script_match = re.search(
+                r'src="(?P<src>https://cdn-app\.gasapp\.co\.kr/static/js/main\.[^"]+\.js)"',
+                html,
+            )
+            if script_match is None:
+                return
+
+            async with self._session.get(
+                script_match.group("src"),
+                headers={
+                    "Accept": "*/*",
+                    "Accept-Language": "ko-KR,ko;q=0.9",
+                    "User-Agent": self._user_agent,
+                },
+            ) as response:
+                await self._raise_for_status(response, "GET", "web main bundle")
+                script = await response.text()
+
+            version_match = re.search(r'SENTRY_RELEASE=\{id:"(?P<version>\d+\.\d+\.\d+)"\}', script)
+            if version_match is None:
+                version_match = re.search(r"webVersion[/=](?P<version>\d+\.\d+\.\d+)", script)
+            if version_match is None:
+                return
+
+            self._web_version = version_match.group("version")
+            _LOGGER.debug("Detected Gas App webVersion %s", self._web_version)
+        except KoreaGasAppApiError as err:
+            _LOGGER.debug("Could not detect Gas App webVersion: %s", err)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Could not detect Gas App webVersion: %s", err)
 
     def _normalize_ios_profile(self) -> None:
         """Use the iOS webview profile for regular API requests."""
@@ -222,6 +274,7 @@ class KoreaGasAppClient:
         name: str,
     ) -> SmsRequestResult:
         """Request a NICE SMS verification code."""
+        await self.async_update_web_version(force=True)
         await self.async_prepare_sms_terms(mobile_co)
         response = await self._post_json(
             "extern/auth/nice/sms/request",
@@ -279,6 +332,7 @@ class KoreaGasAppClient:
         otp: str,
     ) -> SmsConfirmResult:
         """Confirm a NICE SMS verification code."""
+        await self.async_update_web_version(force=True)
         response = await self._post_json(
             "extern/auth/nice/sms/confirm",
             {
@@ -310,7 +364,7 @@ class KoreaGasAppClient:
         ci: str,
         di: str,
         adid: str,
-        marketing_acceptance: str = "Y",
+        marketing_acceptance: str = "N",
     ) -> MemberLoginResult:
         """Create or re-register a Gas App member session."""
         response = await self._post_json(
@@ -391,6 +445,7 @@ class KoreaGasAppClient:
     async def async_get_usage(self) -> GasUsageSnapshot:
         """Fetch the latest usage snapshot."""
         await self.validate()
+        await self.async_update_web_version(force=True)
 
         home = await self._get(
             "home",
@@ -468,6 +523,7 @@ class KoreaGasAppClient:
     ) -> MeterReadingSubmitResult:
         """Submit a customer self meter reading."""
         await self.validate()
+        await self.async_update_web_version(force=True)
         if not self._use_contract_num:
             raise KoreaGasAppApiError("Use contract number is required for submission")
 
@@ -610,10 +666,12 @@ class KoreaGasAppClient:
         if self._session is None:
             raise KoreaGasAppEndpointUnknownError("HTTP session is not available")
 
+        await self.async_update_web_version()
+        request_headers = self._with_current_web_version(headers or self._headers)
         async with self._session.get(
             urljoin(self._base_url, path),
             params=params,
-            headers=headers or self._headers,
+            headers=request_headers,
         ) as response:
             await self._raise_for_status(response, "GET", path)
             return await response.json()
@@ -629,7 +687,8 @@ class KoreaGasAppClient:
         if self._session is None:
             raise KoreaGasAppEndpointUnknownError("HTTP session is not available")
 
-        request_headers = dict(headers or self._headers)
+        await self.async_update_web_version()
+        request_headers = self._with_current_web_version(headers or self._headers)
         request_headers.setdefault("Content-Type", "application/json;charset=utf-8")
         async with self._session.post(
             urljoin(self._base_url, path),
@@ -650,10 +709,12 @@ class KoreaGasAppClient:
         if self._session is None:
             raise KoreaGasAppEndpointUnknownError("HTTP session is not available")
 
+        await self.async_update_web_version()
+        request_headers = self._with_current_web_version(headers or self._headers)
         async with self._session.put(
             urljoin(self._base_url, path),
             json=payload,
-            headers=headers or self._headers,
+            headers=request_headers,
         ) as response:
             await self._raise_for_status(response, "PUT", path)
             if response.content_length == 0:
@@ -677,6 +738,19 @@ class KoreaGasAppClient:
         """Return headers used before a Gas App member session exists."""
         return self._headers_with(auth_token="", member_no="", company_code="null")
 
+    def _with_current_web_version(self, headers: dict[str, str]) -> dict[str, str]:
+        """Return headers with the detected web frontend version applied."""
+        updated = dict(headers)
+        updated["X-WEBVERSION"] = self._web_version
+        user_agent = updated.get("User-Agent")
+        if user_agent and "webVersion/" in user_agent:
+            updated["User-Agent"] = re.sub(
+                r"webVersion/\d+\.\d+\.\d+",
+                f"webVersion/{self._web_version}",
+                user_agent,
+            )
+        return updated
+
     def _headers_with(
         self,
         *,
@@ -699,7 +773,7 @@ class KoreaGasAppClient:
             "X-TOKEN": auth_token,
             "X-MEMBER": member_no,
             "X-COMPANY": company_code,
-            "X-WEBVERSION": DEFAULT_WEB_VERSION,
+            "X-WEBVERSION": self._web_version,
         }
         if self._adid:
             headers["X-ADID"] = self._adid
@@ -723,7 +797,7 @@ class KoreaGasAppClient:
             "X-MEMBER": self._member_no or "",
             "X-COMPANY": company_code,
             "X-ADID": self._adid or device_id,
-            "X-WEBVERSION": DEFAULT_WEB_VERSION,
+            "X-WEBVERSION": self._web_version,
             "X-OS-VERSION": DEFAULT_IOS_OS_VERSION,
             "X-DEVICE-NAME": DEFAULT_IOS_DEVICE_NAME,
             "X-DEVID": device_id,
